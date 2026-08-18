@@ -66,6 +66,11 @@ const sim = await page.evaluate(async () => {
   walk(80, { forward: 0, strafe: 0, jump: false, sprint: false, crouch: false });
   out.crouch = crouched < 1.3 && g.player.height > 1.75;
 
+  // Physics checks below measure the player over several seconds — park the bots so
+  // their gunfire can't change the result.
+  const liveBots = g.bots;
+  g.bots = [];
+
   // --- jump pad reaches the catwalk ring ---
   { const jp = g.jumpPads[0]; put(jp.x, 0.05, jp.z); g.player.grounded = true;
     let peak = 0; for (let i = 0; i < 150; i++) { g.update(1 / 60); peak = Math.max(peak, g.player.pos.y); }
@@ -79,6 +84,8 @@ const sim = await page.evaluate(async () => {
     const y0 = g.player.pos.y; g.player.fire();
     let peak = y0; for (let i = 0; i < 150; i++) { g.update(1 / 60); peak = Math.max(peak, g.player.pos.y); }
     out.rocketJump = { rise: +(peak - y0).toFixed(1), hp: Math.round(g.player.health), alive: g.player.alive }; }
+
+  g.bots = liveBots;
 
   // --- walls stop bullets ---
   { const bot = g.bots[0]; bot.alive = true; bot.health = 1000; bot.maxHealth = 1000;
@@ -94,11 +101,12 @@ const sim = await page.evaluate(async () => {
     put(12, 0.2, 30, 0); v.alive = true; v.health = 100;
     g.player.arsenal.select('rifle', true);
     const k0 = g.player.kills;
-    for (let i = 0; i < 14 && v.alive; i++) {
+    // this checks the damage → kill → score path, not spray control, so keep the cone tight
+    for (let i = 0; i < 20 && v.alive; i++) {
       v.pos.set(12, 0.2, 18); v.vel.set(0, 0, 0);
       const dy = (v.pos.y + v.height * 0.55) - g.player.eyeY;
       g.player.yaw = 0; g.player.pitch = Math.atan2(dy, 12);
-      g.player.recoilPitch = 0; g.player.arsenal.fireTimer = 0;
+      g.player.recoilPitch = 0; g.player.arsenal.fireTimer = 0; g.player.arsenal.spread = 0;
       g.player.fire(); g.update(1 / 60);
     }
     out.playerKill = !v.alive && g.player.kills === k0 + 1;

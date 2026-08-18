@@ -173,9 +173,13 @@ export class Game {
     this.bots = []; this.actors = [];
     for (const p of this.projectiles) this.scene.remove(p.mesh);
     this.projectiles = [];
-    for (const p of this.pickups) this.scene.remove(p.mesh);
+    const dropMesh = m => {
+      this.scene.remove(m);
+      m.traverse(o => { if (o.isMesh) { o.geometry?.dispose?.(); o.material?.dispose?.(); } });
+    };
+    for (const p of this.pickups) dropMesh(p.mesh);
     this.pickups = [];
-    for (const c of this.weaponCrates) this.scene.remove(c.mesh);
+    for (const c of this.weaponCrates) dropMesh(c.mesh);
     this.weaponCrates = [];
     this.usedNames.clear();
   }

@@ -2,7 +2,7 @@
 const KEY = 'overclock.settings.v1';
 
 export const settings = {
-  sens: 1.0, adsSens: 0.7, fov: 95, volume: 0.7,
+  sens: 1.0, adsSens: 0.7, fov: 95, volume: 70,   // volume is 0-100 everywhere
   crosshairColor: '#00ffa8', quality: 'med',
   shake: true, bob: true, blood: true, invertY: false,
   // match config

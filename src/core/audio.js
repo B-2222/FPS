@@ -14,7 +14,7 @@ class AudioEngine {
     if (!AC) return;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = settings.volume;
+    this.master.gain.value = clamp(settings.volume / 100, 0, 1);
     // gentle limiter so 12 guns firing at once doesn't clip into mush
     const comp = this.ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 22; comp.ratio.value = 9;

@@ -44,6 +44,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 .field{margin-bottom:16px}
 .field>label{display:block;font-size:10.5px;letter-spacing:2px;color:var(--mut);font-weight:700;margin-bottom:8px}
 .field>label b{color:var(--mint)}
+.field>label .hint{color:var(--mut);opacity:.7;letter-spacing:1px;font-weight:600}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{flex:1 1 auto;min-width:88px;padding:9px 8px;font-size:11px;letter-spacing:1.4px;font-weight:700;
   border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.03);color:var(--mut);transition:.14s}

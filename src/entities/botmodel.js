@@ -96,7 +96,7 @@ export class BotModel {
   setWeapon(id) {
     if (this.weaponId === id) return;
     this.weaponId = id;
-    if (this.gun) { this.gunMount.remove(this.gun); this.gun.traverse(o => o.isMesh && o.geometry?.dispose?.()); }
+    if (this.gun) this.gunMount.remove(this.gun);   // geometry is shared — never dispose it here
     this.gun = buildWorldWeapon(id);
     this.gun.scale.setScalar(0.9);
     this.gun.position.set(0, 0, -0.1);

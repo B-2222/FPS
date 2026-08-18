@@ -6,6 +6,7 @@ other when you're not around. Eight weapons, three modes, a multi-level arena, n
 download and no build step.
 
 ![menu](docs/menu.png)
+![arena](docs/arena.png)
 
 ## Run it
 

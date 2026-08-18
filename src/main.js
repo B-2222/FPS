@@ -70,17 +70,22 @@ bindRange('in-score', 'scoreLimit', v => Math.round(v));
 bindSeg('sel-mode', 'mode');
 bindSeg('sel-diff', 'difficulty');
 bindSeg('sel-chcol', 'crosshairColor', v => document.documentElement.style.setProperty('--ch', v));
-bindSeg('sel-qual', 'quality');
+bindSeg('sel-qual', 'quality', q => {
+  if (!game) return;
+  game.renderer.setPixelRatio(Math.min(devicePixelRatio, q === 'high' ? 2 : q === 'med' ? 1.5 : 1));
+  game.renderer.shadowMap.enabled = q !== 'low';
+  game.scene.traverse(o => { if (o.isInstancedMesh) o.castShadow = q !== 'low'; });
+  game.renderer.shadowMap.needsUpdate = true;
+});
 bindCheck('in-shake', 'shake');
 bindCheck('in-bob', 'bob');
 bindCheck('in-blood', 'blood', v => { if (game) game.fx.blood = v; });
 bindCheck('in-invert', 'invertY');
 
-// volume/sens are stored 0..1 and 0..100 respectively — normalise
-if (settings.volume <= 1) settings.volume = Math.round(settings.volume * 100);
+// migrate saves from when volume was stored 0..1
+if (settings.volume <= 1) { settings.volume = Math.round(settings.volume * 100); saveSettings(); }
 $('in-vol').value = settings.volume;
 $('lab-vol').textContent = Math.round(settings.volume);
-setAudioVolume(settings.volume / 100);
 document.documentElement.style.setProperty('--ch', settings.crosshairColor);
 
 // pause-menu duplicates
@@ -142,7 +147,8 @@ function showMenu() {
 }
 
 function startMatch() {
-  audio.init();
+  audio.init();                       // AudioContext needs a user gesture
+  setAudioVolume(settings.volume / 100);
   menu.classList.add('hidden');
   endcard.classList.add('hidden');
   pause.classList.add('hidden');
