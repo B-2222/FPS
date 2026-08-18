@@ -240,11 +240,23 @@ export function buildMap(scene, quality) {
   ];
   for (const [x, z, w, h, d, m] of cover) B.box(x, 0, z, w, h, d, m);
 
-  // ---------- JUMP PADS ----------
+  // ---------- MID-FIELD STRUCTURES ----------
+  // Short, sight-line-breaking cover so the slow approach across mid has answers.
   for (const [x, z] of [[24, -24], [-24, 24]]) {
-    B.box(x, 0, z, 4, 0.25, 4, 'pad');
-    jumpPads.push({ x, y: 0.25, z, r: 2.4, power: 20.5 });
+    B.box(x, 0, z, 9, 3.2, 1.2, 'wall2');
+    B.box(x + 4.4, 0, z + 3.2, 1.2, 3.2, 7, 'wall2');
+    B.box(x, 0, z + 6.5, 2.4, 2.2, 2.4, 'crate');
   }
+  for (const [x, z] of [[24, 24], [-24, -24]]) {
+    B.box(x, 0, z, 1.2, 3.2, 9, 'wall2');
+    B.box(x + 3.2, 0, z - 4.4, 7, 3.2, 1.2, 'wall2');
+    B.box(x - 5, 0, z, 2.4, 2.2, 2.4, 'crate');
+  }
+  // low walls you can shoot over from a crouch but not walk through
+  sym4(t => {
+    const [x, z, w, d] = t(32, 0, 1.2, 10);
+    B.box(x, 0, z, w, 1.35, d, 'trim');
+  });
 
   // ---------- pickup + weapon scatter on the floor ----------
   pickups.push(
@@ -294,8 +306,8 @@ function addSky(scene, quality) {
         // sun glow
         vec3 sd = normalize(vec3(0.5, 0.6, 0.35));
         float s = max(dot(normalize(vP), sd), 0.0);
-        c += vec3(1.0,0.85,0.6) * pow(s, 26.0) * 0.9;
-        c += vec3(0.9,0.7,0.5) * pow(s, 5.0) * 0.10;
+        c += vec3(1.0,0.88,0.68) * pow(s, 90.0) * 0.55;
+        c += vec3(0.85,0.72,0.58) * pow(s, 8.0) * 0.06;
         gl_FragColor = vec4(c, 1.0);
       }`,
   });

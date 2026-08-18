@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>OVERCLOCK — Arena FPS</title>
+<title>OVERCLOCK — Tactical FPS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎯</text></svg>" />
 <link rel="stylesheet" href="./style.css" />
 <script type="importmap">
@@ -24,8 +24,11 @@
     <div id="hit-dirs"></div>
     <div id="float-dmg"></div>
 
-    <div id="use-prompt" class="hidden"><b>E</b> PICK UP</div>
+    <div id="use-prompt" class="hidden"><b>F</b> PICK UP</div>
     <div id="fps">0 FPS</div>
+
+    <div id="prep" class="hidden"><span>ROUND STARTS IN</span><b id="prep-num">4</b></div>
+    <div id="spectating" class="hidden">SPECTATING <b id="spec-name">—</b><i>click for next</i></div>
 
     <div id="hud-bottom-left">
       <div id="vitals">
@@ -40,6 +43,7 @@
           <span id="sh-num">0</span>
         </div>
       </div>
+      <div id="stance">STAND</div>
       <div id="streak-chip" class="hidden"><b id="streak-n">2</b> KILLSTREAK</div>
     </div>
 
@@ -64,7 +68,8 @@
         <div id="match-timer">10:00</div>
         <div class="team t-b"><span class="val" id="score-b">0</span><span class="lbl" id="lbl-b">BOTS</span></div>
       </div>
-      <div id="mode-tag">FREE FOR ALL — FIRST TO 30</div>
+      <div id="alive-count" class="hidden"></div>
+      <div id="mode-tag">TACTICAL</div>
     </div>
 
     <div id="killfeed"></div>
@@ -73,7 +78,7 @@
     <div id="pickup-toast"></div>
 
     <div id="scoreboard" class="hidden">
-      <div class="sb-head"><h2 id="sb-title">FREE FOR ALL</h2><span id="sb-sub">First to 30 kills</span></div>
+      <div class="sb-head"><h2 id="sb-title">TACTICAL</h2><span id="sb-sub">Round 1</span></div>
       <div id="sb-body"></div>
       <div class="sb-foot">HOLD <b>TAB</b></div>
     </div>
@@ -92,12 +97,13 @@
     <div class="bg-grid"></div>
     <div class="menu-card">
       <h1 class="logo">OVER<span>CLOCK</span></h1>
-      <p class="tagline">fast-paced arena shooter · <span id="menu-hint">click to lock mouse</span></p>
+      <p class="tagline">tactical arena shooter · <span id="menu-hint">one shot to the head ends it</span></p>
 
       <div class="menu-tabs">
         <button class="tab active" data-tab="play">PLAY</button>
         <button class="tab" data-tab="loadout">LOADOUT</button>
-        <button class="tab" data-tab="settings">SETTINGS</button>
+        <button class="tab" data-tab="aim">AIM</button>
+        <button class="tab" data-tab="video">GAME</button>
         <button class="tab" data-tab="controls">CONTROLS</button>
       </div>
 
@@ -105,10 +111,12 @@
         <div class="field">
           <label>GAME MODE</label>
           <div class="seg" id="sel-mode">
-            <button data-v="ffa" class="on">FREE FOR ALL</button>
+            <button data-v="tactical" class="on">TACTICAL</button>
             <button data-v="tdm">TEAM DEATHMATCH</button>
+            <button data-v="ffa">FREE FOR ALL</button>
             <button data-v="gungame">GUN GAME</button>
           </div>
+          <p class="mode-note" id="mode-note"></p>
         </div>
         <div class="field">
           <label>BOT COUNT — <b id="lab-bots">7</b></label>
@@ -123,7 +131,11 @@
             <button data-v="insane">NIGHTMARE</button>
           </div>
         </div>
-        <div class="field">
+        <div class="field" id="field-rounds">
+          <label>ROUNDS TO WIN — <b id="lab-rounds">4</b></label>
+          <input type="range" id="in-rounds" min="1" max="8" value="4" />
+        </div>
+        <div class="field" id="field-score">
           <label>SCORE LIMIT — <b id="lab-score">30</b></label>
           <input type="range" id="in-score" min="5" max="80" step="5" value="30" />
         </div>
@@ -131,16 +143,56 @@
       </section>
 
       <section class="pane" data-pane="loadout">
-        <p class="pane-note">Pick your starting weapon. Swap in-game with <b>1</b>–<b>8</b> or the mouse wheel — every gun is on the ground somewhere.</p>
+        <p class="pane-note">Your starting weapon. Every gun is also on the ground somewhere — walk over one and press <b>F</b>.</p>
         <div id="loadout-grid"></div>
       </section>
 
-      <section class="pane" data-pane="settings">
-        <div class="field"><label>MOUSE SENSITIVITY — <b id="lab-sens">1.00</b></label><input type="range" id="in-sens" min="0.1" max="5" step="0.05" value="1" /></div>
-        <div class="field"><label>ADS SENSITIVITY MULT — <b id="lab-adssens">0.70</b></label><input type="range" id="in-adssens" min="0.1" max="1.5" step="0.05" value="0.7" /></div>
-        <div class="field"><label>FIELD OF VIEW — <b id="lab-fov">95</b></label><input type="range" id="in-fov" min="70" max="120" value="95" /></div>
-        <div class="field"><label>MASTER VOLUME — <b id="lab-vol">70</b></label><input type="range" id="in-vol" min="0" max="100" value="70" /></div>
-        <div class="field"><label>CROSSHAIR COLOR</label><div class="seg" id="sel-chcol">
+      <section class="pane" data-pane="aim">
+        <h3 class="sec">SENSITIVITY</h3>
+        <div class="field">
+          <label>HIPFIRE SENSITIVITY — <b id="lab-sens">1.00</b> <span class="hint" id="cm360">≈ 24 cm/360°</span></label>
+          <input type="range" id="in-sens" min="0.05" max="4" step="0.01" value="1" />
+        </div>
+        <div class="field">
+          <label>ADS MULTIPLIER — <b id="lab-adssens">0.85</b></label>
+          <input type="range" id="in-adssens" min="0.1" max="1.5" step="0.01" value="0.85" />
+        </div>
+        <div class="field">
+          <label>SCOPE MULTIPLIER — <b id="lab-scopesens">0.55</b> <span class="hint">sniper only</span></label>
+          <input type="range" id="in-scopesens" min="0.1" max="1.5" step="0.01" value="0.55" />
+        </div>
+        <div class="field">
+          <label>VERTICAL / HORIZONTAL RATIO — <b id="lab-yx">1.00</b></label>
+          <input type="range" id="in-yx" min="0.5" max="1.5" step="0.01" value="1" />
+        </div>
+        <div class="field">
+          <label>ZOOM SCALING</label>
+          <div class="seg" id="sel-zoom">
+            <button data-v="relative" class="on">RELATIVE</button>
+            <button data-v="independent">INDEPENDENT</button>
+          </div>
+          <p class="mode-note">Relative keeps on-screen tracking consistent as you zoom. Independent applies your multipliers raw.</p>
+        </div>
+        <div class="field">
+          <label>MOUSE DPI — <b id="lab-dpi">800</b> <span class="hint">only used for the cm/360 readout</span></label>
+          <input type="range" id="in-dpi" min="100" max="6400" step="50" value="800" />
+        </div>
+        <div class="field row-toggles">
+          <label class="chk"><input type="checkbox" id="in-invert" /> <span>Invert vertical</span></label>
+          <label class="chk"><input type="checkbox" id="in-raw" checked /> <span>Raw mouse input</span></label>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="video">
+        <h3 class="sec">INPUT BEHAVIOUR</h3>
+        <div class="field row-toggles">
+          <label class="chk"><input type="checkbox" id="in-toggleads" /> <span>Toggle aim</span></label>
+          <label class="chk"><input type="checkbox" id="in-togglecrouch" /> <span>Toggle crouch</span></label>
+          <label class="chk"><input type="checkbox" id="in-autoreload" checked /> <span>Auto reload when empty</span></label>
+        </div>
+        <h3 class="sec">DISPLAY</h3>
+        <div class="field"><label>FIELD OF VIEW — <b id="lab-fov">90</b></label><input type="range" id="in-fov" min="70" max="120" value="90" /></div>
+        <div class="field"><label>CROSSHAIR COLOUR</label><div class="seg" id="sel-chcol">
           <button data-v="#00ffa8" class="on" style="color:#00ffa8">MINT</button>
           <button data-v="#ffffff" style="color:#fff">WHITE</button>
           <button data-v="#ff2d55" style="color:#ff2d55">RED</button>
@@ -154,29 +206,18 @@
           <label class="chk"><input type="checkbox" id="in-shake" checked /> <span>Screen shake</span></label>
           <label class="chk"><input type="checkbox" id="in-bob" checked /> <span>View bob</span></label>
           <label class="chk"><input type="checkbox" id="in-blood" checked /> <span>Blood & impacts</span></label>
-          <label class="chk"><input type="checkbox" id="in-invert" /> <span>Invert Y</span></label>
         </div>
+        <h3 class="sec">AUDIO</h3>
+        <div class="field"><label>MASTER VOLUME — <b id="lab-vol">70</b></label><input type="range" id="in-vol" min="0" max="100" value="70" /></div>
       </section>
 
       <section class="pane" data-pane="controls">
-        <div class="keys">
-          <div><b>W A S D</b><span>Move</span></div>
-          <div><b>SPACE</b><span>Jump / bunny-hop</span></div>
-          <div><b>SHIFT</b><span>Sprint</span></div>
-          <div><b>CTRL / C</b><span>Crouch — slide while sprinting</span></div>
-          <div><b>MOUSE 1</b><span>Fire</span></div>
-          <div><b>MOUSE 2</b><span>Aim down sights</span></div>
-          <div><b>R</b><span>Reload</span></div>
-          <div><b>1 – 8 / WHEEL</b><span>Switch weapon</span></div>
-          <div><b>Q</b><span>Quick-swap last weapon</span></div>
-          <div><b>E</b><span>Pick up weapon / use</span></div>
-          <div><b>F</b><span>Melee knife</span></div>
-          <div><b>TAB</b><span>Scoreboard</span></div>
-          <div><b>ESC</b><span>Pause</span></div>
-        </div>
+        <p class="pane-note">Click a slot then press any key, mouse button or scroll direction. <b>Esc</b> cancels, <b>right-click</b> a slot to clear it.</p>
+        <div id="binds-list"></div>
+        <button id="btn-binds-reset" class="ghost-btn">RESET TO DEFAULTS</button>
       </section>
     </div>
-    <div class="menu-foot">Tip: shoot the <b>ammo crates</b> to top up · rocket-jump with the launcher · headshots do double damage</div>
+    <div class="menu-foot">Headshots kill instantly · aim down sights and stop moving to shoot straight · lean with <b>Q</b>/<b>E</b></div>
   </div>
 
   <div id="pause" class="overlay hidden">
@@ -185,7 +226,7 @@
       <button id="btn-resume" class="big-btn">RESUME</button>
       <button id="btn-restart" class="ghost-btn">RESTART MATCH</button>
       <button id="btn-quit" class="ghost-btn">QUIT TO MENU</button>
-      <div class="field"><label>MOUSE SENSITIVITY — <b id="lab-sens2">1.00</b></label><input type="range" id="in-sens2" min="0.1" max="5" step="0.05" value="1" /></div>
+      <div class="field"><label>SENSITIVITY — <b id="lab-sens2">1.00</b></label><input type="range" id="in-sens2" min="0.05" max="4" step="0.01" value="1" /></div>
       <div class="field"><label>MASTER VOLUME — <b id="lab-vol2">70</b></label><input type="range" id="in-vol2" min="0" max="100" value="70" /></div>
     </div>
   </div>

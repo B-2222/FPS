@@ -62,6 +62,9 @@ export class ViewModel {
     // st: {speed, grounded, ads, sprint, reloading, reloadFrac, swapFrac, crouching, mouseDX, mouseDY, weaponId, melee}
     this.setWeapon(st.weaponId);
     const pose = VM_POSE[st.weaponId] || VM_POSE.rifle;
+    // a magnified optic replaces the weapon on screen — don't draw the gun through it
+    this.root.visible = !(st.scoped && this.adsAmt > 0.7);
+    if (!this.root.visible) { this.adsAmt = damp(this.adsAmt, st.ads ? 1 : 0, 16, dt); return; }
 
     this.adsAmt = damp(this.adsAmt, st.ads ? 1 : 0, 16, dt);
     const lowerTarget = (st.sprint ? 1 : 0);

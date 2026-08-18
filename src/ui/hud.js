@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { settings } from '../core/settings.js';
 import { clamp, fmtTime } from '../core/util.js';
 import { getWeapon, WEAPON_IDS } from '../weapons/defs.js';
+import { binds, codeLabel } from '../core/keybinds.js';
 
 const $ = id => document.getElementById(id);
 const _v = new THREE.Vector3();
@@ -22,16 +23,30 @@ export class HUD {
       scoreboard: $('scoreboard'), sbBody: $('sb-body'), sbTitle: $('sb-title'), sbSub: $('sb-sub'),
       respawn: $('respawn'), rsName: $('rs-name'), rsWeapon: $('rs-weapon'), rsSec: $('rs-sec'),
       streak: $('streak-chip'), streakN: $('streak-n'),
-      fps: $('fps'), usePrompt: $('use-prompt'),
+      fps: $('fps'), usePrompt: $('use-prompt'), alive: $('alive-count'),
+      prep: $('prep'), prepNum: $('prep-num'), spectating: $('spectating'), specName: $('spec-name'),
+      stance: $('stance'),
     };
     this.vigT = 0; this.hitmarkT = 0;
+    this.keyHint = id => codeLabel((binds[id] || [])[0]);
     this.kfItems = [];
     this.slotEls = new Map();
     this.buildWheel();
+    this.refreshKeyHints();
     document.documentElement.style.setProperty('--ch', settings.crosshairColor);
   }
 
   show(v) { this.el.hud.classList.toggle('hidden', !v); }
+
+  /** every on-screen key prompt reads from the live bindings */
+  refreshKeyHints() {
+    this.el.reloadHint.innerHTML = `PRESS <b>${this.keyHint('reload')}</b> TO RELOAD`;
+    const foot = document.querySelector('.sb-foot');
+    if (foot) foot.innerHTML = `HOLD <b>${this.keyHint('scoreboard')}</b>`;
+    const spec = document.querySelector('#spectating i');
+    if (spec) spec.textContent = `${this.keyHint('spectNext')} for next`;
+    this._crate = null;                      // force the pickup prompt to redraw
+  }
 
   buildWheel() {
     this.el.wheel.innerHTML = '';
@@ -78,9 +93,9 @@ export class HUD {
       this.el.reloadFill.style.width = ((1 - ars.reloadT / ars.reloadTotal) * 100) + '%';
     } else this.el.reloadBar.classList.remove('on');
 
-    // crosshair opens with spread
-    const spread = ars.currentSpread(player.speed > 2.5, !player.grounded, player.adsAmt > 0.85, player.crouching);
-    const gap = clamp(4 + spread * 3.4, 3, 46);
+    // crosshair opens with the real spread cone
+    const spread = ars.currentSpread(player.speed / 3.7, !player.grounded, player.adsAmt > 0.8, player.crouching);
+    const gap = clamp(3 + spread * 7, 3, 60);
     this.el.crosshair.style.setProperty('--gap', gap + 'px');
     const scoped = w.scope && player.adsAmt > 0.72;
     this.el.scope.classList.toggle('hidden', !scoped);
@@ -96,6 +111,7 @@ export class HUD {
     if (hpF < 0.3 && player.alive) this.el.vignette.style.opacity = Math.max(this.el.vignette.style.opacity || 0, (0.3 - hpF) * 1.4);
 
     this.updateWheel(ars);
+    this.setStance(player);
 
     if (player.streak >= 2 && player.alive) {
       this.el.streak.classList.remove('hidden');
@@ -105,13 +121,42 @@ export class HUD {
 
   setFps(v) { if (this.el.fps) this.el.fps.textContent = v + ' FPS'; }
 
+  setAlive(a, b) {
+    if (!this.el.alive) return;
+    this.el.alive.classList.remove('hidden');
+    this.el.alive.innerHTML = `<b class="a">${a}</b><span>ALIVE</span><b class="b">${b}</b>`;
+  }
+
+  setPrep(seconds) {
+    if (!this.el.prep) return;
+    if (seconds == null) { this.el.prep.classList.add('hidden'); return; }
+    this.el.prep.classList.remove('hidden');
+    this.el.prepNum.textContent = Math.max(0, Math.ceil(seconds));
+  }
+
+  setSpectating(name) {
+    if (!this.el.spectating) return;
+    this.el.spectating.classList.toggle('hidden', !name);
+    if (name) this.el.specName.textContent = name;
+  }
+
+  /** stance + silent-walk readout, so you always know how loud you are */
+  setStance(player) {
+    if (!this.el.stance) return;
+    const s = player.crouching ? 'CROUCH' : player.walking ? 'WALK' : player.sprinting ? 'SPRINT' : 'STAND';
+    const quiet = player.walking || player.crouching;
+    this.el.stance.textContent = s;
+    this.el.stance.classList.toggle('quiet', quiet);
+    this.el.stance.classList.toggle('loud', player.sprinting);
+  }
+
   usePrompt(crate) {
     const el = this.el.usePrompt;
     if (!el) return;
     if (!crate) { el.classList.add('hidden'); this._crate = null; return; }
     if (this._crate !== crate.id) {
       this._crate = crate.id;
-      el.innerHTML = `<b>E</b> PICK UP ${getWeapon(crate.id).name}`;
+      el.innerHTML = `<b>${this.keyHint('use')}</b> PICK UP ${getWeapon(crate.id).name}`;
     }
     el.classList.remove('hidden');
   }

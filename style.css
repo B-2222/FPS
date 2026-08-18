@@ -102,10 +102,15 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 #hitmarker.kill svg{stroke:var(--red)}
 @keyframes hm{0%{opacity:1;transform:scale(.6)}100%{opacity:0;transform:scale(1.25)}}
 
-#scope{position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,transparent 0,transparent 20%,#000 27%)}
-.scope-ring{position:absolute;left:50%;top:50%;width:44vh;height:44vh;margin:-22vh 0 0 -22vh;border:2px solid rgba(0,0,0,.9);border-radius:50%}
-.scope-h{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,.85)}
-.scope-v{position:absolute;top:0;bottom:0;left:50%;width:1px;background:rgba(0,0,0,.85)}
+#scope{position:absolute;inset:0;
+  background:radial-gradient(circle at 50% 50%,transparent 0,transparent 29%,rgba(0,0,0,.55) 31%,#000 36%)}
+.scope-ring{position:absolute;left:50%;top:50%;width:62vh;height:62vh;margin:-31vh 0 0 -31vh;
+  border:2px solid rgba(0,0,0,.85);border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,.06) inset}
+.scope-ring::after{content:'';position:absolute;inset:12%;border-radius:50%;border:1px solid rgba(255,255,255,.05)}
+.scope-h{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,.8)}
+.scope-v{position:absolute;top:0;bottom:0;left:50%;width:1px;background:rgba(0,0,0,.8)}
+#scope::after{content:'';position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;
+  border-radius:50%;background:rgba(0,0,0,.85)}
 
 #dmg-vignette{position:absolute;inset:0;opacity:0;transition:opacity .25s;
   background:radial-gradient(ellipse at center,transparent 42%,rgba(255,10,40,.62) 100%)}
@@ -234,3 +239,46 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
   #ammo-mag{font-size:38px}
   .logo{font-size:32px}
 }
+
+
+/* ============ tactical additions ============ */
+.sec{font-size:10px;letter-spacing:3px;color:var(--mint);font-weight:800;margin:18px 0 12px;
+  padding-bottom:6px;border-bottom:1px solid var(--line)}
+.pane .sec:first-child{margin-top:0}
+.mode-note{font-size:11.5px;color:var(--mut);line-height:1.5;margin-top:8px}
+
+/* keybinding rows */
+#binds-list{max-height:44vh;overflow-y:auto;padding-right:6px;margin-bottom:14px}
+#binds-list::-webkit-scrollbar{width:8px}
+#binds-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:8px}
+.bind-group{font-size:9.5px;letter-spacing:2.6px;color:var(--mint);font-weight:800;margin:14px 0 6px}
+.bind-group:first-child{margin-top:0}
+.bind-row{display:grid;grid-template-columns:1fr 116px 116px;gap:8px;align-items:center;
+  padding:5px 10px;border-radius:8px}
+.bind-row:nth-child(even){background:rgba(255,255,255,.025)}
+.bind-row>span{font-size:12.5px;color:var(--txt)}
+.bind-key{padding:7px 6px;border:1px solid var(--line);border-radius:7px;background:rgba(255,255,255,.04);
+  font-family:var(--mono);font-size:11px;color:var(--txt);text-align:center;transition:.12s;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.bind-key:hover{border-color:rgba(0,255,168,.5);background:rgba(0,255,168,.08)}
+.bind-key.empty{color:var(--mut)}
+.bind-key.listening{border-color:var(--mint);background:rgba(0,255,168,.18);color:var(--mint);animation:pulse .8s infinite}
+.bind-key.dupe{border-color:var(--gold);color:var(--gold)}
+
+/* round + stance HUD */
+#alive-count{margin-top:6px;display:flex;align-items:center;justify-content:center;gap:10px;
+  font-size:10px;letter-spacing:2.4px;color:var(--mut);font-weight:700}
+#alive-count b{font-family:var(--mono);font-size:16px}
+#alive-count b.a{color:var(--mint)} #alive-count b.b{color:var(--red)}
+#prep{position:absolute;left:50%;top:34%;transform:translateX(-50%);text-align:center}
+#prep span{display:block;font-size:11px;letter-spacing:4px;color:var(--mut);font-weight:700}
+#prep b{font-family:var(--mono);font-size:64px;line-height:1;color:#fff;text-shadow:0 4px 24px #000}
+#spectating{position:absolute;left:50%;bottom:14%;transform:translateX(-50%);text-align:center;
+  font-size:12px;letter-spacing:3px;color:var(--mut);font-weight:700}
+#spectating b{color:var(--red);font-size:16px;margin-left:6px}
+#spectating i{display:block;font-style:normal;font-size:10px;letter-spacing:2px;opacity:.6;margin-top:4px}
+#stance{margin-top:9px;display:inline-block;padding:3px 10px;border-radius:5px;
+  border:1px solid var(--line);background:rgba(0,0,0,.4);
+  font-size:9.5px;letter-spacing:2.4px;font-weight:700;color:var(--mut)}
+#stance.quiet{color:var(--cyan);border-color:rgba(76,201,255,.4)}
+#stance.loud{color:var(--gold);border-color:rgba(255,214,10,.4)}

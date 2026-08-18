@@ -2,12 +2,35 @@
 const KEY = 'overclock.settings.v1';
 
 export const settings = {
-  sens: 1.0, adsSens: 0.7, fov: 95, volume: 70,   // volume is 0-100 everywhere
-  crosshairColor: '#00ffa8', quality: 'med',
-  shake: true, bob: true, blood: true, invertY: false,
-  // match config
-  mode: 'ffa', bots: 7, difficulty: 'normal', scoreLimit: 30, loadout: 'rifle',
+  // ---- aim ----
+  sens: 1.0,            // hipfire; 1.0 ≈ 24 cm/360 at 800 DPI
+  adsSens: 0.85,        // multiplier while aiming down sights
+  scopeSens: 0.55,      // multiplier while using a magnified scope
+  zoomMode: 'relative', // 'relative' = scale with FOV (consistent tracking), 'independent' = raw multipliers
+  yxRatio: 1.0,         // vertical sensitivity relative to horizontal
+  dpi: 800,             // only used to display cm/360
+  invertY: false,
+  rawInput: true,       // ask the browser for unaccelerated mouse deltas
+
+  // ---- display ----
+  fov: 90, adsFovMode: 'affected', volume: 70,   // volume is 0-100 everywhere
+  crosshairColor: '#00ffa8', crosshairDot: true, quality: 'med',
+  shake: true, bob: true, blood: true, tracers: true,
+
+  // ---- input behaviour ----
+  toggleAds: false, toggleCrouch: false, toggleSprint: false, autoReload: true,
+
+  // ---- match config ----
+  mode: 'tactical', bots: 7, difficulty: 'normal', scoreLimit: 30, roundsToWin: 4, loadout: 'rifle',
 };
+
+/** cm of mousepad per 360° turn — the number competitive players actually tune */
+export function cm360(sens = settings.sens, dpi = settings.dpi) {
+  const degPerCount = RAD_PER_COUNT * sens * 180 / Math.PI;
+  return (360 / degPerCount) / dpi * 2.54;
+}
+/** radians of yaw per mouse count at sens 1.0 */
+export const RAD_PER_COUNT = 0.00082;
 
 export function loadSettings() {
   try {

@@ -1,17 +1,21 @@
-// ============ shared character movement (quake-flavoured: bhop, air-strafe, slide) ============
+// ============ grounded, tactical character movement ============
+// Deliberately *not* an arcade mover: no bunny-hopping, no air-strafe acceleration,
+// no slide. Speed comes from stance and commitment, so holding an angle beats
+// jumping around it.
 import * as THREE from 'three';
 import { moveBody } from '../world/collision.js';
-import { clamp } from '../core/util.js';
+import { clamp, damp } from '../core/util.js';
 
 export const MOVE = {
-  walk: 7.4, sprint: 10.8, crouch: 3.9, ads: 4.6,
-  groundAccel: 13, airAccel: 22, airWishCap: 2.6,
-  friction: 8.5, gravity: 26, jumpVel: 9.3,
-  slideBoost: 3.4, slideTime: 0.62, slideFriction: 1.6,
-  radius: 0.42, height: 1.82, crouchHeight: 1.16, stepHeight: 0.56,
+  walk: 3.7, sprint: 6.0, crouch: 1.95, ads: 2.35, slow: 1.7,
+  groundAccel: 11, airAccel: 1.8,
+  friction: 11, gravity: 22, jumpVel: 6.2,
+  radius: 0.42, height: 1.82, crouchHeight: 1.15, stepHeight: 0.56,
+  leanDist: 0.44, leanRoll: 0.21, leanSpeedMult: 0.55,
+  landRecover: 0.3,
 };
 
-const _wish = new THREE.Vector3();
+const _probe = new THREE.Vector3();
 
 function accelerate(vel, wx, wz, wishSpeed, accel, dt) {
   const cur = vel.x * wx + vel.z * wz;
@@ -23,15 +27,14 @@ function accelerate(vel, wx, wz, wishSpeed, accel, dt) {
 }
 
 /**
- * cmd: {forward, strafe, jump, sprint, crouch}  — forward/strafe in [-1,1], already in world space via yaw
- * Mutates actor.pos / actor.vel and returns move info.
+ * cmd: { forward, strafe, jump, sprint, crouch, slow, lean }  — lean is -1..1
+ * Mutates actor.pos / actor.vel. Returns the collision result.
  */
 export function stepMovement(actor, cmd, dt, world, game) {
   const v = actor.vel, p = actor.pos;
 
-  // ---- desired direction in world space ----
+  // ---- wish direction in world space (yaw 0 looks down -Z) ----
   const sy = Math.sin(actor.yaw), cy = Math.cos(actor.yaw);
-  // yaw 0 looks down -Z
   let wx = -sy * cmd.forward + cy * cmd.strafe;
   let wz = -cy * cmd.forward - sy * cmd.strafe;
   const wl = Math.hypot(wx, wz);
@@ -40,99 +43,63 @@ export function stepMovement(actor, cmd, dt, world, game) {
 
   // ---- stance ----
   const wantCrouch = cmd.crouch;
-  const speed2 = Math.hypot(v.x, v.z);
-
-  // start a slide: sprinting + crouch while grounded and moving fast
-  if (wantCrouch && actor.grounded && cmd.sprint && speed2 > 7.0 && actor.slideCd <= 0 && !actor.sliding) {
-    actor.sliding = true; actor.slideT = MOVE.slideTime; actor.slideCd = 1.0;
-    const s = Math.max(speed2, 8) + MOVE.slideBoost;
-    const inv = 1 / Math.max(speed2, 0.001);
-    v.x = v.x * inv * s; v.z = v.z * inv * s;
-    if (game) game.onSlide?.(actor);
-  }
-  if (actor.sliding) {
-    actor.slideT -= dt;
-    if (actor.slideT <= 0 || !wantCrouch || !actor.grounded) actor.sliding = false;
-  }
-  actor.slideCd = Math.max(0, actor.slideCd - dt);
-
-  const crouching = (wantCrouch || actor.sliding);
-  const targetH = crouching ? MOVE.crouchHeight : MOVE.height;
-  // can we stand back up?
-  if (!crouching && actor.height < MOVE.height) {
+  const targetH = wantCrouch ? MOVE.crouchHeight : MOVE.height;
+  if (!wantCrouch && actor.height < MOVE.height) {
     const free = !world.overlaps(p.x - MOVE.radius, p.y, p.z - MOVE.radius,
-                                p.x + MOVE.radius, p.y + MOVE.height, p.z + MOVE.radius, []);
-    actor.height = free ? Math.min(MOVE.height, actor.height + dt * 6) : actor.height;
+      p.x + MOVE.radius, p.y + MOVE.height, p.z + MOVE.radius, []);
+    if (free) actor.height = Math.min(MOVE.height, actor.height + dt * 4.5);
   } else {
-    actor.height += (targetH - actor.height) * Math.min(1, dt * 14);
+    actor.height += (targetH - actor.height) * Math.min(1, dt * 9);
   }
-  actor.crouching = crouching;
+  actor.crouching = wantCrouch || actor.height < MOVE.height - 0.25;
 
-  // ---- speed target ----
+  // ---- lean ----
+  updateLean(actor, cmd.lean ?? 0, dt, world);
+
+  // ---- target speed ----
+  actor.landT = Math.max(0, (actor.landT ?? 0) - dt);
   let wishSpeed = MOVE.walk;
-  if (actor.sliding) wishSpeed = 2.0;
-  else if (crouching) wishSpeed = MOVE.crouch;
+  if (cmd.slow) wishSpeed = MOVE.slow;
+  else if (actor.crouching) wishSpeed = MOVE.crouch;
   else if (cmd.sprint && cmd.forward > 0.1) wishSpeed = MOVE.sprint;
   else if (actor.adsing) wishSpeed = MOVE.ads;
+  if (actor.leanAmt) wishSpeed *= 1 - Math.abs(actor.leanAmt) * (1 - MOVE.leanSpeedMult);
+  if (actor.landT > 0) wishSpeed *= 0.62;             // brief recovery after landing
   wishSpeed *= actor.speedMult ?? 1;
+  actor.sprinting = cmd.sprint && cmd.forward > 0.1 && !actor.crouching && !actor.adsing && actor.grounded;
 
-  // ---- ground vs air ----
+  // ---- ground / air ----
   if (actor.grounded) {
-    const fric = actor.sliding ? MOVE.slideFriction : MOVE.friction;
-    // no friction on the frame you jump → bunny hops keep momentum
-    if (!actor.hopping) {
-      const sp = Math.hypot(v.x, v.z);
-      if (sp > 0.01) {
-        const drop = Math.max(sp, 4) * fric * dt;
-        const ns = Math.max(0, sp - drop) / sp;
-        v.x *= ns; v.z *= ns;
-      }
+    const sp = Math.hypot(v.x, v.z);
+    if (sp > 0.01) {
+      const drop = Math.max(sp, 3) * MOVE.friction * dt;
+      const ns = Math.max(0, sp - drop) / sp;
+      v.x *= ns; v.z *= ns;
     }
     if (wishing) accelerate(v, wx, wz, wishSpeed, MOVE.groundAccel, dt);
-  } else {
-    if (wishing) {
-      accelerate(v, wx, wz, Math.min(wishSpeed, MOVE.airWishCap), MOVE.airAccel, dt);
-      // mild extra air control so you can still curve mid-flight
-      accelerate(v, wx, wz, wishSpeed * 0.55, 2.2, dt);
-    }
+  } else if (wishing) {
+    // almost no air control: you commit to a jump
+    accelerate(v, wx, wz, wishSpeed * 0.85, MOVE.airAccel, dt);
   }
-  actor.hopping = false;
 
   // ---- jump ----
-  const canJump = actor.grounded || actor.coyote > 0;
-  if (cmd.jump && canJump && actor.jumpCd <= 0) {
+  if (cmd.jump && actor.grounded && actor.jumpCd <= 0 && !actor.crouching) {
     v.y = MOVE.jumpVel;
-    actor.grounded = false; actor.coyote = 0; actor.jumpCd = 0.09; actor.hopping = true;
-    actor.sliding = false;
-    if (game) game.onJump?.(actor);
+    actor.grounded = false; actor.jumpCd = 0.32;
+    game?.onJump?.(actor);
   }
   actor.jumpCd = Math.max(0, actor.jumpCd - dt);
 
-  // ---- gravity ----
-  v.y -= MOVE.gravity * dt;
-  v.y = Math.max(v.y, -70);
-
-  // ---- integrate + collide ----
+  // ---- gravity + integration ----
+  v.y = Math.max(v.y - MOVE.gravity * dt, -70);
   const wasAir = !actor.grounded;
   const res = moveBody(world, p, v, dt, { radius: MOVE.radius, height: actor.height, stepHeight: MOVE.stepHeight });
   actor.grounded = res.grounded;
-  actor.coyote = res.grounded ? 0.11 : Math.max(0, actor.coyote - dt);
-  if (res.grounded && wasAir && game) {
-    const impact = actor.lastFallVel ?? 0;
-    game.onLand?.(actor, impact);
+  if (res.grounded && wasAir) {
+    actor.landT = MOVE.landRecover;
+    game?.onLand?.(actor, actor.lastFallVel ?? 0);
   }
   actor.lastFallVel = v.y;
-
-  // ---- jump pads ----
-  if (game && game.jumpPads && res.grounded) {
-    for (const jp of game.jumpPads) {
-      if (Math.abs(p.x - jp.x) < jp.r && Math.abs(p.z - jp.z) < jp.r && Math.abs(p.y - jp.y) < 0.7) {
-        v.y = jp.power; actor.grounded = false;
-        game.onJumpPad?.(actor, jp);
-        break;
-      }
-    }
-  }
 
   // ---- arena bounds safety net ----
   const B = (game?.bounds ?? 58) - 1.2;
@@ -141,4 +108,29 @@ export function stepMovement(actor, cmd, dt, world, game) {
 
   actor.speed = Math.hypot(v.x, v.z);
   return res;
+}
+
+/**
+ * Leaning shifts the camera *and* the head/torso hitboxes sideways, so peeking
+ * an angle really does expose you — it is not a free wallhack.
+ */
+function updateLean(actor, want, dt, world) {
+  if (!actor.leanVec) actor.leanVec = new THREE.Vector3();
+  let target = clamp(want, -1, 1);
+  if (target !== 0 && world) {
+    // don't lean into geometry: probe sideways from the eye
+    const sy = Math.sin(actor.yaw), cy = Math.cos(actor.yaw);
+    const rx = cy * Math.sign(target), rz = -sy * Math.sign(target);
+    _probe.set(actor.pos.x, actor.pos.y + actor.height - 0.25, actor.pos.z);
+    const dir = _probe.clone().set(rx, 0, rz).normalize();
+    const hit = world.raycast(_probe, dir, MOVE.leanDist + 0.35);
+    if (hit) {
+      const room = Math.max(0, hit.dist - 0.35) / MOVE.leanDist;
+      target = Math.sign(target) * Math.min(Math.abs(target), room);
+    }
+  }
+  actor.leanAmt = damp(actor.leanAmt ?? 0, target, 11, dt);
+  if (Math.abs(actor.leanAmt) < 0.002) actor.leanAmt = 0;
+  const sy = Math.sin(actor.yaw), cy = Math.cos(actor.yaw);
+  actor.leanVec.set(cy, 0, -sy).multiplyScalar(actor.leanAmt * MOVE.leanDist);
 }

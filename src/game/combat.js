@@ -7,7 +7,8 @@ import { audio } from '../core/audio.js';
 const _dir = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3();
 const _o = new THREE.Vector3(), _p = new THREE.Vector3(), _tmp = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
-const PART_MULT = { head: 'headMult', legs: 'limbMult', body: null };
+/** enough damage that no amount of health survives it — used for lethal headshots */
+const LETHAL = 100000;
 
 function coneDir(out, dir, degrees) {
   out.copy(dir);
@@ -56,7 +57,8 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
     const hit = traceShot(game, shooter, origin, _dir.copy(dirIn), w.range);
     audio.click(muzzle, { freq: 900, dur: 0.12, vol: 0.35 });
     if (hit.actor) {
-      const dmg = w.dmg * (hit.part === 'head' ? w.headMult : hit.part === 'legs' ? w.limbMult : 1);
+      const dmg = hit.part === 'head' && w.headshotKill ? LETHAL
+        : w.dmg * (hit.part === 'head' ? w.headMult : hit.part === 'legs' ? w.limbMult : 1);
       resolveHit(game, shooter, hit.actor, dmg, hit, w);
     } else if (hit.world) {
       game.fx.impact(hit.point, hit.normal, 'wall');
@@ -83,8 +85,10 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
     if (hit.actor) {
       const dist = hit.t;
       let dmg = falloffDamage(w, dist);
-      if (hit.part === 'head') { dmg *= w.headMult; anyHead = true; }
-      else if (hit.part === 'legs') dmg *= w.limbMult;
+      if (hit.part === 'head') {
+        anyHead = true;
+        dmg = w.headshotKill ? LETHAL : dmg * w.headMult;
+      } else if (hit.part === 'legs') dmg *= w.limbMult;
       const r = resolveHit(game, shooter, hit.actor, dmg, hit, w);
       anyHit = true; anyKill = anyKill || r.killed;
     } else if (hit.world) {
@@ -117,13 +121,14 @@ export function traceShot(game, shooter, origin, dir, maxDist) {
 }
 
 function resolveHit(game, shooter, victim, dmg, hit, w) {
-  const res = victim.applyDamage(dmg, shooter, { weapon: w.id, part: hit.part });
+  const headshot = hit.part === 'head';
+  const res = victim.applyDamage(dmg, shooter, { weapon: w.id, part: hit.part, headshot });
   shooter.damageDealt += res.dealt;
   game.fx.impact(hit.point, hit.normal, 'flesh');
   audio.impact(hit.point, 'flesh');
   victim.onDamaged?.(res.dealt, shooter, hit, w);
-  if (shooter === game.player) game.hud.floatDamage(hit.point, Math.round(res.dealt), hit.part === 'head');
-  if (res.killed) game.onKill(shooter, victim, w.id, hit.part === 'head');
+  if (shooter === game.player) game.hud.floatDamage(hit.point, Math.round(res.dealt), headshot);
+  if (res.killed) game.onKill(shooter, victim, w.id, headshot);
   return res;
 }
 

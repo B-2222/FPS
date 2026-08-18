@@ -39,8 +39,10 @@ export class Actor {
     this.vel = new THREE.Vector3();
     this.yaw = 0; this.pitch = 0;
     this.height = MOVE.height;
-    this.grounded = false; this.crouching = false; this.sliding = false;
-    this.slideT = 0; this.slideCd = 0; this.coyote = 0; this.jumpCd = 0;
+    this.grounded = false; this.crouching = false; this.sprinting = false;
+    this.jumpCd = 0; this.landT = 0;
+    this.leanAmt = 0; this.leanVec = new THREE.Vector3();
+    this.adsing = false;
     this.speed = 0; this.speedMult = 1;
     this.maxHealth = 100;
     this.health = 100; this.shield = 0; this.maxShield = 100;
@@ -54,7 +56,10 @@ export class Actor {
   }
 
   get eyeY() { return this.pos.y + this.height - 0.22; }
-  eyePos(out = _v) { return out.set(this.pos.x, this.eyeY, this.pos.z); }
+  eyePos(out = _v) {
+    const l = this.leanVec;
+    return out.set(this.pos.x + (l ? l.x : 0), this.eyeY, this.pos.z + (l ? l.z : 0));
+  }
 
   /** forward vector from yaw/pitch */
   dirVec(out = new THREE.Vector3()) {
@@ -67,18 +72,22 @@ export class Actor {
     if (!this.alive) return null;
     const p = this.pos, h = this.height, r = 0.38;
     // quick reject via bounding sphere
-    const cx = p.x, cy = p.y + h * 0.5, cz = p.z;
+    const cx = p.x + (this.leanVec ? this.leanVec.x * 0.5 : 0), cy = p.y + h * 0.5,
+          cz = p.z + (this.leanVec ? this.leanVec.z * 0.5 : 0);
     const bs = raySphere(o.x, o.y, o.z, d.x, d.y, d.z, cx, cy, cz, h * 0.62 + 0.3);
     if (bs < 0 || bs > maxDist) {
       const inside = (o.x - cx) ** 2 + (o.y - cy) ** 2 + (o.z - cz) ** 2 < (h * 0.62 + 0.3) ** 2;
       if (!inside) return null;
     }
     let best = Infinity, part = null;
+    // leaning slides the head fully and the torso partly out of cover
+    const lx = this.leanVec ? this.leanVec.x : 0, lz = this.leanVec ? this.leanVec.z : 0;
     const headY = p.y + h - 0.17, headR = 0.245;
-    const th = raySphere(o.x, o.y, o.z, d.x, d.y, d.z, p.x, headY, p.z, headR);
+    const th = raySphere(o.x, o.y, o.z, d.x, d.y, d.z, p.x + lx, headY, p.z + lz, headR);
     if (th >= 0 && th < best) { best = th; part = 'head'; }
+    const bx = p.x + lx * 0.5, bz = p.z + lz * 0.5;
     const tb = rayAABB(o.x, o.y, o.z, d.x, d.y, d.z,
-      p.x - r, p.y + h * 0.28, p.z - r, p.x + r, p.y + h - 0.30, p.z + r);
+      bx - r, p.y + h * 0.28, bz - r, bx + r, p.y + h - 0.30, bz + r);
     if (tb >= 0 && tb < best) { best = tb; part = 'body'; }
     const tl = rayAABB(o.x, o.y, o.z, d.x, d.y, d.z,
       p.x - r * 0.85, p.y, p.z - r * 0.85, p.x + r * 0.85, p.y + h * 0.28, p.z + r * 0.85);
@@ -91,7 +100,8 @@ export class Actor {
   applyDamage(amount, attacker, meta = {}) {
     if (!this.alive) return { dealt: 0, killed: false };
     let dealt = 0;
-    if (this.shield > 0) {
+    // armour plates cover the torso — a round through the head ignores them
+    if (this.shield > 0 && !meta.headshot) {
       const absorbed = Math.min(this.shield, amount * 0.72);
       this.shield -= absorbed; amount -= absorbed; dealt += absorbed;
     }
@@ -111,7 +121,8 @@ export class Actor {
     this.pos.copy(pos); this.vel.set(0, 0, 0);
     this.health = this.maxHealth; this.shield = 0;
     this.alive = true; this.height = MOVE.height;
-    this.grounded = false; this.sliding = false; this.crouching = false;
+    this.grounded = false; this.crouching = false;
+    this.leanAmt = 0; this.leanVec.set(0, 0, 0); this.adsing = false;
     this.arsenal.onSpawn();
   }
 }
@@ -132,6 +143,7 @@ export class Arsenal {
     this.swapT = 0; this.swapTotal = 0; this.pendingSwap = null;
     this.spread = 0;
     this.sprayIndex = 0;
+    this.sinceShot = 99;
     this.triggerHeld = false;
     this.burstLeft = 0;
     this.pumpT = 0;
@@ -245,9 +257,10 @@ export class Arsenal {
         }
       }
     }
-    // spread recovery
+    // spread recovery, and the spray pattern resets once you stop shooting
     this.spread = Math.max(0, this.spread - w.spreadDecay * dt);
-    if (this.spread <= 0.001) this.sprayIndex = Math.max(0, this.sprayIndex - dt * 12);
+    this.sinceShot += dt;
+    if (this.sinceShot > 0.32) this.sprayIndex = 0;
   }
 
   canFire() {
@@ -262,6 +275,7 @@ export class Arsenal {
   consume() {
     const w = this.def;
     this.fireTimer = fireDelay(w);
+    this.sinceShot = 0;
     if (!w.melee) {
       const a = this.ammo; a.mag--;
       this.spread = Math.min(w.spreadMax, this.spread + w.spreadPerShot);
@@ -270,13 +284,19 @@ export class Arsenal {
     }
   }
 
-  /** total cone half-angle in degrees for the current state */
-  currentSpread(moving, airborne, ads, crouch) {
+  /**
+   * Cone half-angle in degrees. speedFrac is current speed / walk speed, so
+   * standing still is genuinely more accurate than shuffling — stopping to
+   * shoot is a decision the player makes, not a state they toggle.
+   */
+  currentSpread(speedFrac, airborne, ads, crouch) {
     const w = this.def;
-    let s = ads ? w.spreadAds : w.spreadBase;
-    if (airborne) s *= w.spreadAir;
-    else if (moving) s *= w.spreadMove;
-    else if (crouch) s *= w.spreadCrouch;
+    let s = ads ? w.adsSpread : w.hipSpread;
+    if (airborne) s += w.airPenalty;
+    else {
+      s += (ads ? w.adsMovePenalty : w.hipMovePenalty) * clamp(speedFrac, 0, 1.3);
+      if (crouch) s *= w.crouchBonus;
+    }
     return s + this.spread;
   }
 }

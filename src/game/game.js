@@ -15,7 +15,7 @@ import { bodyFree } from '../world/collision.js';
 import { MOVE } from '../entities/movement.js';
 import { audio } from '../core/audio.js';
 import { settings } from '../core/settings.js';
-import { input, down, hit, requestLock, exitLock, endFrameInput } from '../core/input.js';
+import { input, actionDown, actionHit, requestLock, exitLock } from '../core/input.js';
 import { clamp, rand, randInt, pick, botName, damp } from '../core/util.js';
 import { getWeapon, WEAPON_IDS, GUNGAME_LADDER } from '../weapons/defs.js';
 
@@ -123,14 +123,21 @@ export class Game {
     this.cfg = {
       mode: cfg.mode || 'ffa', botCount: cfg.bots ?? 7, difficulty: cfg.difficulty || 'normal',
       scoreLimit: cfg.scoreLimit ?? 30, timeLimit: cfg.timeLimit ?? 600,
+      roundsToWin: cfg.roundsToWin ?? 4, roundTime: cfg.roundTime ?? 150, prepTime: cfg.prepTime ?? 4,
     };
+    this.rounds = [0, 0];
+    this.roundNo = 0;
+    this.roundState = 'prep';
+    this.roundT = 0;
+    this.frozen = false;
+    this.specTarget = null;
     this.clearMatch();
     this.time = 0;
     this.matchTime = this.cfg.timeLimit;
     this.over = false;
     this.multiKill = 0; this.lastKillT = -9;
 
-    const teams = this.cfg.mode === 'tdm';
+    const teams = this.cfg.mode === 'tdm' || this.cfg.mode === 'tactical';
     this.player.team = 0;
     this.player.kills = this.player.deaths = this.player.score = this.player.streak = 0;
     this.player.damageDealt = this.player.shotsFired = this.player.shotsHit = this.player.headshots = 0;
@@ -157,15 +164,18 @@ export class Game {
     this.respawn(this.player, true);
     for (const b of this.bots) this.respawn(b, true);
 
-    const modeName = this.cfg.mode === 'ffa' ? 'FREE FOR ALL' : this.cfg.mode === 'tdm' ? 'TEAM DEATHMATCH' : 'GUN GAME';
+    const modeName = { ffa: 'FREE FOR ALL', tdm: 'TEAM DEATHMATCH', gungame: 'GUN GAME', tactical: 'TACTICAL' }[this.cfg.mode];
     const sub = this.cfg.mode === 'gungame'
       ? `${GUNGAME_LADDER.length} WEAPONS — ONE KILL EACH`
-      : `FIRST TO ${this.cfg.scoreLimit} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`;
+      : this.cfg.mode === 'tactical'
+        ? `ONE LIFE PER ROUND — FIRST TO ${this.cfg.roundsToWin} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`
+        : `FIRST TO ${this.cfg.scoreLimit} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`;
     this.hud.setMode(`${modeName} — ${sub}`);
     this.hud.show(true);
     this.updateScoreHud();
     this.running = true; this.paused = false;
-    this.hud.centerToast('FIGHT');
+    if (this.cfg.mode === 'tactical') this.beginRound(true);
+    else this.hud.centerToast('FIGHT');
   }
 
   clearMatch() {
@@ -325,9 +335,16 @@ export class Game {
 
   /* ================= spawning ================= */
   pickSpawn(actor) {
+    // team modes start each side of the map so rounds open with a real approach
+    let pool = this.spawnPoints;
+    if (this.cfg.mode === 'tdm' || this.cfg.mode === 'tactical') {
+      const side = actor.team === 0 ? -1 : 1;
+      const half = this.spawnPoints.filter(sp => Math.sign(sp.x + sp.z) === side);
+      if (half.length >= 3) pool = half;
+    }
     let best = null, bestScore = -Infinity;
-    for (let i = 0; i < this.spawnPoints.length; i++) {
-      const sp = this.spawnPoints[(i + randInt(0, 3)) % this.spawnPoints.length];
+    for (let i = 0; i < pool.length; i++) {
+      const sp = pool[(i + randInt(0, 3)) % pool.length];
       let minEnemy = Infinity;
       for (const a of this.actors) {
         if (a === actor || !a.alive || this.friendly(actor, a)) continue;
@@ -355,6 +372,81 @@ export class Game {
       this.hud.showRespawn(false);
       this.viewModel.setWeapon(actor.arsenal.current);
     }
+  }
+
+  /* ================= round-based play ================= */
+  teamAlive(t) { return this.actors.filter(a => a.team === t && a.alive).length; }
+
+  beginRound(first = false) {
+    this.roundNo++;
+    this.roundPressure = false;
+    this.roundState = 'prep';
+    this.roundT = this.cfg.prepTime;
+    this.frozen = true;
+    this.specTarget = null;
+    for (const a of this.actors) this.respawn(a, true);
+    this.hud.setSpectating(null);
+    this.hud.showRespawn(false);
+    this.updateScoreHud();
+    if (!first) this.hud.centerToast(`ROUND ${this.roundNo}`);
+  }
+
+  endRound(winningTeam) {
+    if (this.roundState === 'over') return;
+    this.roundState = 'over';
+    this.roundT = 4;
+    this.frozen = true;
+    if (winningTeam >= 0) {
+      this.rounds[winningTeam]++;
+      const won = winningTeam === this.player.team;
+      this.hud.centerToast(won ? 'ROUND WON' : 'ROUND LOST');
+      audio.tone(won ? 660 : 300, 0.5, 0.3, 'triangle', won ? 990 : 200);
+    } else this.hud.centerToast('ROUND DRAW');
+    this.updateScoreHud();
+  }
+
+  updateRounds(dt) {
+    this.roundT -= dt;
+    if (this.roundState === 'prep') {
+      this.hud.setPrep(this.roundT);
+      if (this.roundT <= 0) {
+        this.roundState = 'live';
+        this.roundT = this.cfg.roundTime;
+        this.frozen = false;
+        this.hud.setPrep(null);
+        this.hud.centerToast('GO');
+      }
+      return;
+    }
+    if (this.roundState === 'live') {
+      this.hud.setTimer(this.roundT);
+      // late in a round the survivors stop turtling and go looking for each other
+      this.roundPressure = this.roundT < 45;
+      const a0 = this.teamAlive(0), a1 = this.teamAlive(1);
+      if (a0 === 0 || a1 === 0) return this.endRound(a0 === 0 ? 1 : 0);
+      if (this.roundT <= 0) return this.endRound(a0 === a1 ? -1 : (a0 > a1 ? 0 : 1));
+      return;
+    }
+    // 'over' — brief scoreboard beat, then either the match ends or the next round starts
+    if (this.roundT <= 0) {
+      if (this.rounds[0] >= this.cfg.roundsToWin || this.rounds[1] >= this.cfg.roundsToWin) {
+        this.endMatch({ team: this.rounds[0] > this.rounds[1] ? 0 : 1 });
+      } else this.beginRound();
+    }
+  }
+
+  /** dead in a round-based match: ride along with a living teammate */
+  updateSpectator(dt) {
+    const mates = this.actors.filter(a => a !== this.player && a.alive && this.friendly(this.player, a));
+    if (!mates.length) { this.hud.setSpectating(null); return; }
+    if (!this.specTarget || !this.specTarget.alive || !mates.includes(this.specTarget)) this.specTarget = mates[0];
+    if (actionHit('spectNext')) this.specTarget = mates[(mates.indexOf(this.specTarget) + 1) % mates.length];
+    const a = this.specTarget;
+    const cam = this.camera;
+    cam.position.set(a.pos.x + a.leanVec.x, a.eyeY, a.pos.z + a.leanVec.z);
+    cam.rotation.set(a.pitch, a.yaw, 0, 'YXZ');
+    if (Math.abs(cam.fov - settings.fov) > 0.01) { cam.fov = settings.fov; cam.updateProjectionMatrix(); }
+    this.hud.setSpectating(a.name);
   }
 
   /* ================= events ================= */
@@ -427,9 +519,14 @@ export class Game {
     if (victim === this.player) {
       audio.died();
       this.player.deadT = 0;
-      this.respawnTimer = 3;
-      this.hud.showRespawn(true, killer?.name || 'THE VOID', weaponId, this.respawnTimer);
       this.hud.damageFlash(1);
+      if (this.cfg.mode === 'tactical') {
+        this.hud.showRespawn(false);
+        this.hud.pickupToast('ELIMINATED — SPECTATING', '#ff3b5c');
+      } else {
+        this.respawnTimer = 3;
+        this.hud.showRespawn(true, killer?.name || 'THE VOID', weaponId, this.respawnTimer);
+      }
     } else if (victim.isBot) {
       victim.respawnTimer = rand(2.4, 4.5);
       this.fx.impact(_v.set(victim.pos.x, victim.pos.y + 1, victim.pos.z), _v2.set(0, 1, 0), 'flesh');
@@ -488,6 +585,11 @@ export class Game {
   teamScore(t) { return this.actors.filter(a => a.team === t).reduce((s, a) => s + a.kills, 0); }
 
   updateScoreHud() {
+    if (this.cfg.mode === 'tactical') {
+      this.hud.setScores(this.rounds[0], this.rounds[1], 'ROUNDS', 'ROUNDS');
+      this.hud.setAlive(this.teamAlive(0), this.teamAlive(1));
+      return;
+    }
     if (this.cfg.mode === 'tdm') {
       this.hud.setScores(this.teamScore(0), this.teamScore(1), 'MINT', 'CRIMSON');
     } else if (this.cfg.mode === 'gungame') {
@@ -500,7 +602,7 @@ export class Game {
   }
 
   checkWin() {
-    if (this.over) return;
+    if (this.over || this.cfg.mode === 'tactical') return;
     const lim = this.cfg.scoreLimit;
     if (this.cfg.mode === 'tdm') {
       if (this.teamScore(0) >= lim) return this.endMatch({ team: 0 });
@@ -516,7 +618,7 @@ export class Game {
     exitLock();
     const rows = this.scoreRows();
     let won = false, title = 'DEFEAT';
-    if (this.cfg.mode === 'tdm') {
+    if (this.cfg.mode === 'tactical' || this.cfg.mode === 'tdm') {
       won = winner?.team === 0; title = won ? 'VICTORY' : 'DEFEAT';
     } else {
       won = winner === this.player; title = won ? 'VICTORY' : 'DEFEAT';
@@ -546,7 +648,13 @@ export class Game {
     this.time += dt;
     this.pathBudget = 3;
 
-    if (this.cfg.timeLimit > 0) {
+    const tactical = this.cfg.mode === 'tactical';
+    if (tactical) {
+      this.updateRounds(dt);
+      if (this.over) return;
+    }
+
+    if (!tactical && this.cfg.timeLimit > 0) {
       this.matchTime -= dt;
       this.hud.setTimer(this.matchTime);
       if (this.matchTime <= 0) {
@@ -563,19 +671,23 @@ export class Game {
     // ---- player ----
     this.player.update(dt);
     if (!this.player.alive) {
-      this.respawnTimer -= dt;
-      this.hud.showRespawn(true, this.player.killedBy, this.player.killedWith, this.respawnTimer);
-      if (this.respawnTimer <= 0) this.respawn(this.player);
+      if (tactical) this.updateSpectator(dt);
+      else {
+        this.respawnTimer -= dt;
+        this.hud.showRespawn(true, this.player.killedBy, this.player.killedWith, this.respawnTimer);
+        if (this.respawnTimer <= 0) this.respawn(this.player);
+      }
     }
 
     // ---- bots ----
     for (const b of this.bots) {
       b.update(dt);
-      if (!b.alive) {
+      if (!b.alive && !tactical) {
         b.respawnTimer -= dt;
         if (b.respawnTimer <= 0) this.respawn(b);
       }
     }
+    if (tactical) this.updateScoreHud();
 
     updateProjectiles(this, dt);
     this.updatePickups(dt);
@@ -592,10 +704,14 @@ export class Game {
     this.hud.usePrompt(this.nearbyCrate());
     this.hud.update(dt, this.player);
     this.minimap.draw(dt);
-    if (down('Tab')) this.hud.scoreboard(true, {
-      title: this.cfg.mode === 'tdm' ? 'TEAM DEATHMATCH' : this.cfg.mode === 'gungame' ? 'GUN GAME' : 'FREE FOR ALL',
-      sub: this.cfg.mode === 'gungame' ? `TIER ${this.player.gunGameTier + 1} / ${GUNGAME_LADDER.length}` : `FIRST TO ${this.cfg.scoreLimit}`,
-      rows: this.scoreRows(), teams: this.cfg.mode === 'tdm' ? [this.teamScore(0), this.teamScore(1)] : null,
+    if (actionDown('scoreboard')) this.hud.scoreboard(true, {
+      title: { ffa: 'FREE FOR ALL', tdm: 'TEAM DEATHMATCH', gungame: 'GUN GAME', tactical: 'TACTICAL' }[this.cfg.mode],
+      sub: this.cfg.mode === 'gungame' ? `TIER ${this.player.gunGameTier + 1} / ${GUNGAME_LADDER.length}`
+        : this.cfg.mode === 'tactical' ? `ROUND ${this.roundNo} — ${this.rounds[0]} : ${this.rounds[1]}`
+        : `FIRST TO ${this.cfg.scoreLimit}`,
+      rows: this.scoreRows(),
+      teams: (this.cfg.mode === 'tdm' || this.cfg.mode === 'tactical')
+        ? (this.cfg.mode === 'tactical' ? this.rounds : [this.teamScore(0), this.teamScore(1)]) : null,
     });
     else this.hud.scoreboard(false);
 
@@ -604,6 +720,7 @@ export class Game {
     this.viewModel.update(dt, {
       weaponId: ars.current, speed: this.player.speed, grounded: this.player.grounded,
       ads: this.player.adsing, sprint: this.player.sprinting, crouching: this.player.crouching,
+      scoped: ars.def.scope,
       reloading: ars.reloading, reloadFrac: ars.reloading ? 1 - ars.reloadT / ars.reloadTotal : 0,
       swapFrac: ars.swapT > 0 ? 1 - ars.swapT / ars.swapTotal : 0,
       pumping: ars.pumpT > 0, pumpFrac: ars.pumpT > 0 ? 1 - ars.pumpT / 0.28 : 0,

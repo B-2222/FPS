@@ -10,32 +10,32 @@ import { bodyFree } from '../world/collision.js';
 
 export const DIFFICULTY = {
   easy: {
-    label: 'RECRUIT', sight: 46, fov: 118, react: [0.42, 0.78], aimSpeed: 5.5, maxTurn: 5.0,
-    aimError: 5.4, errPeriod: [0.35, 0.7], fireCone: 9, spreadMult: 1.9, burstMult: 1.35,
-    headChance: 0.05, strafeChance: 0.45, jumpChance: 0.02, coverSkill: 0.15, lead: 0.25,
-    moveMult: 0.9, memory: 2.5, reloadEarly: 0.1,
+    label: 'RECRUIT', sight: 40, fov: 112, react: [0.5, 0.9], aimSpeed: 5, maxTurn: 4.5,
+    aimError: 5.5, errPeriod: [0.35, 0.7], fireCone: 8, spreadMult: 1.8, burstMult: 1.4,
+    headChance: 0.02, strafeChance: 0.3, jumpChance: 0, coverSkill: 0.15, lead: 0.25,
+    moveMult: 0.9, memory: 2.5, reloadEarly: 0.1, holdAngle: 0.1,
   },
   normal: {
-    label: 'REGULAR', sight: 58, fov: 140, react: [0.25, 0.46], aimSpeed: 8.5, maxTurn: 7.5,
-    aimError: 3.0, errPeriod: [0.3, 0.55], fireCone: 6.5, spreadMult: 1.3, burstMult: 1.15,
-    headChance: 0.16, strafeChance: 0.72, jumpChance: 0.06, coverSkill: 0.4, lead: 0.55,
-    moveMult: 1.0, memory: 4, reloadEarly: 0.2,
+    label: 'REGULAR', sight: 52, fov: 132, react: [0.3, 0.52], aimSpeed: 8, maxTurn: 7,
+    aimError: 3.2, errPeriod: [0.3, 0.55], fireCone: 6, spreadMult: 1.3, burstMult: 1.15,
+    headChance: 0.08, strafeChance: 0.5, jumpChance: 0.01, coverSkill: 0.4, lead: 0.55,
+    moveMult: 1.0, memory: 4, reloadEarly: 0.2, holdAngle: 0.3,
   },
   hard: {
-    label: 'VETERAN', sight: 72, fov: 160, react: [0.15, 0.27], aimSpeed: 12.5, maxTurn: 10.5,
-    aimError: 1.7, errPeriod: [0.25, 0.45], fireCone: 4.5, spreadMult: 1.0, burstMult: 1.0,
-    headChance: 0.3, strafeChance: 0.86, jumpChance: 0.12, coverSkill: 0.7, lead: 0.8,
-    moveMult: 1.05, memory: 6, reloadEarly: 0.3,
+    label: 'VETERAN', sight: 66, fov: 152, react: [0.18, 0.3], aimSpeed: 12, maxTurn: 10,
+    aimError: 1.8, errPeriod: [0.25, 0.45], fireCone: 4.2, spreadMult: 1.0, burstMult: 1.0,
+    headChance: 0.22, strafeChance: 0.62, jumpChance: 0.03, coverSkill: 0.7, lead: 0.8,
+    moveMult: 1.02, memory: 6, reloadEarly: 0.3, holdAngle: 0.55,
   },
   insane: {
-    label: 'NIGHTMARE', sight: 90, fov: 190, react: [0.07, 0.15], aimSpeed: 18, maxTurn: 15,
-    aimError: 0.85, errPeriod: [0.18, 0.34], fireCone: 3, spreadMult: 0.78, burstMult: 0.9,
-    headChance: 0.5, strafeChance: 0.95, jumpChance: 0.2, coverSkill: 0.9, lead: 1.0,
-    moveMult: 1.12, memory: 8, reloadEarly: 0.4,
+    label: 'NIGHTMARE', sight: 85, fov: 185, react: [0.09, 0.17], aimSpeed: 17, maxTurn: 14,
+    aimError: 0.95, errPeriod: [0.18, 0.34], fireCone: 3, spreadMult: 0.85, burstMult: 0.9,
+    headChance: 0.45, strafeChance: 0.75, jumpChance: 0.05, coverSkill: 0.9, lead: 1.0,
+    moveMult: 1.05, memory: 8, reloadEarly: 0.4, holdAngle: 0.75,
   },
 };
 
-const PREF_RANGE = { shotgun: 6.5, smg: 11, rifle: 19, sniper: 36, pistol: 13, revolver: 15, lmg: 21, rocket: 17, knife: 2 };
+const PREF_RANGE = { shotgun: 7, smg: 12, rifle: 20, sniper: 38, pistol: 14, revolver: 17, lmg: 24, rocket: 18, knife: 2 };
 const WEAPON_RANK = { knife: 0, pistol: 1, smg: 2, shotgun: 3, revolver: 3, rifle: 4, lmg: 4, sniper: 5, rocket: 5 };
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _eye = new THREE.Vector3(), _aim = new THREE.Vector3();
@@ -103,6 +103,8 @@ export class Bot extends Actor {
       return;
     }
 
+    if (g.frozen) { this.model.update(dt, this, g.camera.position); return; }
+
     this.arsenal.update(dt);
     this.senseT -= dt; this.repathT -= dt; this.pickupCd -= dt;
     if (this.senseT <= 0) { this.senseT = rand(0.1, 0.18); this.sense(); }
@@ -119,6 +121,10 @@ export class Bot extends Actor {
     } else {
       this.canSee = false; this.target = null; this.trackTime = 0;
     }
+
+    // shouldering the weapon costs mobility and buys accuracy, same as the player
+    this.adsing = !!(this.target && this.canSee && this.trackTime > 0.12 &&
+                     (this.targetDist ?? 99) > 5 && !this.arsenal.def.melee);
 
     this.think(dt);
     this.aim(dt);
@@ -314,16 +320,24 @@ export class Bot extends Actor {
 
       if (d > pref * 1.35) forward = 1;
       else if (d < pref * 0.62) forward = -1;
-      else forward = Math.random() < 0.02 ? pick([1, -1]) * 0.5 : 0;
+      else forward = 0;
 
       this.strafeT -= dt;
       if (this.strafeT <= 0) {
-        this.strafeT = rand(0.5, 1.5);
-        if (Math.random() < this.cfg.strafeChance) this.strafeDir = pick([-1, 1]);
-        else this.strafeDir = 0;
+        this.strafeT = rand(0.7, 1.9);
+        this.strafeDir = Math.random() < this.cfg.strafeChance ? pick([-1, 1]) : 0;
       }
       strafe = this.strafeDir;
-      sprint = forward > 0.5 && d > pref * 2;
+      sprint = forward > 0.5 && d > pref * 2.2;
+
+      // settle before shooting: a bot that is nearly on target stops moving,
+      // exactly like a player counter-strafing for an accurate shot
+      const onTarget = (this.aimOff ?? 9) < this.cfg.fireCone * Math.PI / 180 * 2.2;
+      if (onTarget && d < pref * 1.5 && Math.random() < 0.5 + this.cfg.holdAngle * 0.5) {
+        forward *= 0.15; strafe *= 0.2; sprint = false;
+      }
+      // hold long angles from a crouch
+      crouch = onTarget && d > pref * 1.1 && Math.abs(forward) < 0.2 && Math.random() < this.cfg.holdAngle;
 
       // don't strafe off a ledge or into a wall
       if (strafe && !this.probeSafe(strafe, 0)) { this.strafeDir *= -1; strafe = this.strafeDir; if (!this.probeSafe(strafe, 0)) strafe = 0; }
@@ -332,11 +346,11 @@ export class Bot extends Actor {
       // if we can't see them but are engaging, path instead of blind-walking
       if (!canReachDirect) goal = this.lastSeen;
 
-      // combat hops
+      // the odd hop over cover — jumping is a liability now, so it is rare
       this.jumpT -= dt;
       if (this.jumpT <= 0) {
-        this.jumpT = rand(1.1, 3.2);
-        if (Math.random() < this.cfg.jumpChance * 6 && this.grounded && d < 26) jump = true;
+        this.jumpT = rand(2.5, 6);
+        if (Math.random() < this.cfg.jumpChance * 4 && this.grounded && d < 20) jump = true;
       }
       // knife rushers charge
       if (w.melee) { forward = 1; sprint = true; strafe *= 0.4; }
@@ -345,7 +359,9 @@ export class Bot extends Actor {
     if (goal || this.state === 'roam') {
       if (this.state === 'roam' && (!this.dest || this.pos.distanceTo(this.dest) < 3 || this.repathT <= 0)) {
         if (!this.dest || this.pos.distanceTo(this.dest) < 3) {
-          const n = g.nav.randomNode();
+          // with a round clock running down, sweep toward the enemy instead of wandering
+          const hunt = g.roundPressure && Math.random() < 0.8 ? this.pickHuntSpot() : null;
+          const n = hunt || g.nav.randomNode();
           this.dest = new THREE.Vector3(n.x, n.y, n.z);
           this.path = null;
         }
@@ -390,8 +406,18 @@ export class Bot extends Actor {
     // footsteps for nearby ears
     if (this.grounded && this.speed > 2) {
       this.stepDist = (this.stepDist || 0) + this.speed * dt;
-      if (this.stepDist > 2.2) { this.stepDist = 0; audioFootstep(this); }
+      if (this.stepDist > 2.0) { this.stepDist = 0; audioFootstep(this); }
     }
+  }
+
+  /** a spot near a living enemy — used to break round stalemates */
+  pickHuntSpot() {
+    const g = this.game;
+    const foes = g.actors.filter(a => a.alive && a !== this && !g.friendly(this, a));
+    if (!foes.length) return null;
+    const foe = pick(foes);
+    const n = g.nav.nodes[g.nav.nearest(foe.pos)];
+    return n && n.open ? n : null;
   }
 
   /** true if moving this way keeps us on solid ground */
@@ -473,7 +499,7 @@ export class Bot extends Actor {
       this.burstLeft = Math.max(1, Math.round(randInt(w.botBurst[0], w.botBurst[1]) * this.cfg.burstMult));
     }
 
-    const spread = ars.currentSpread(this.speed > 2.5, !this.grounded, false, this.crouching) * this.cfg.spreadMult;
+    const spread = ars.currentSpread(this.speed / MOVE.walk, !this.grounded, this.adsing, this.crouching) * this.cfg.spreadMult;
     const dir = this.dirVec(new THREE.Vector3());
     const muzzle = this.model.muzzleWorld(new THREE.Vector3());
     fireWeapon(g, this, dir, spread, { origin: this.eyePos().clone(), muzzle });
@@ -517,5 +543,5 @@ function audioFootstep(bot) {
   const g = bot.game;
   if (!g.player.alive) return;
   const d = bot.pos.distanceTo(g.player.pos);
-  if (d < 26) g.audio.footstep(bot.pos, bot.speed > 8);
+  if (d < 30) g.audio.footstep(bot.pos, bot.speed > 5);
 }

@@ -1,24 +1,28 @@
 // ============ boot, menus, main loop ============
 import { Game } from './game/game.js';
-import { settings, loadSettings, saveSettings } from './core/settings.js';
-import { initInput, input, requestLock, exitLock, endFrameInput } from './core/input.js';
+import { settings, loadSettings, saveSettings, cm360 } from './core/settings.js';
+import { initInput, input, requestLock, exitLock, endFrameInput, beginCapture } from './core/input.js';
+import {
+  ACTIONS, ACTION_GROUPS, binds, loadBinds, saveBinds, resetBinds,
+  setBind, clearBind, conflicts, codeLabel,
+} from './core/keybinds.js';
 import { audio, setAudioVolume } from './core/audio.js';
-import { WEAPON_IDS, WEAPONS, getWeapon } from './weapons/defs.js';
+import { WEAPON_IDS, WEAPONS } from './weapons/defs.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('scene');
 
 loadSettings();
+loadBinds();
 initInput(canvas);
 
 let game = null;
 let last = performance.now();
-let started = false;
 
-/* ================= menu plumbing ================= */
+/* ================= generic control binding ================= */
 function bindRange(id, key, fmt = v => v, onChange) {
   const el = $(id), lab = $('lab-' + id.replace('in-', ''));
-  if (!el) return;
+  if (!el) return () => {};
   const sync = () => {
     el.value = settings[key];
     el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%');
@@ -60,14 +64,25 @@ document.querySelectorAll('.menu-tabs .tab').forEach(t => {
   });
 });
 
-// settings controls
-const syncSens = bindRange('in-sens', 'sens', v => v.toFixed(2));
+/* ================= aim settings ================= */
+const showCm360 = () => { $('cm360').textContent = `≈ ${cm360().toFixed(1)} cm/360°`; };
+const syncSens = bindRange('in-sens', 'sens', v => v.toFixed(2), showCm360);
 bindRange('in-adssens', 'adsSens', v => v.toFixed(2));
+bindRange('in-scopesens', 'scopeSens', v => v.toFixed(2));
+bindRange('in-yx', 'yxRatio', v => v.toFixed(2));
+bindRange('in-dpi', 'dpi', v => Math.round(v), showCm360);
+bindSeg('sel-zoom', 'zoomMode');
+bindCheck('in-invert', 'invertY');
+bindCheck('in-raw', 'rawInput');
+showCm360();
+
+/* ================= game settings ================= */
 bindRange('in-fov', 'fov', v => Math.round(v), v => { if (game) game.camera.fov = v; });
-const syncVol = bindRange('in-vol', 'volume', v => Math.round(v), v => setAudioVolume(v / 100));
+bindRange('in-vol', 'volume', v => Math.round(v), v => setAudioVolume(v / 100));
 bindRange('in-bots', 'bots', v => Math.round(v));
 bindRange('in-score', 'scoreLimit', v => Math.round(v));
-bindSeg('sel-mode', 'mode');
+bindRange('in-rounds', 'roundsToWin', v => Math.round(v));
+bindSeg('sel-mode', 'mode', syncModeUI);
 bindSeg('sel-diff', 'difficulty');
 bindSeg('sel-chcol', 'crosshairColor', v => document.documentElement.style.setProperty('--ch', v));
 bindSeg('sel-qual', 'quality', q => {
@@ -80,13 +95,28 @@ bindSeg('sel-qual', 'quality', q => {
 bindCheck('in-shake', 'shake');
 bindCheck('in-bob', 'bob');
 bindCheck('in-blood', 'blood', v => { if (game) game.fx.blood = v; });
-bindCheck('in-invert', 'invertY');
+bindCheck('in-toggleads', 'toggleAds');
+bindCheck('in-togglecrouch', 'toggleCrouch');
+bindCheck('in-autoreload', 'autoReload');
 
 // migrate saves from when volume was stored 0..1
 if (settings.volume <= 1) { settings.volume = Math.round(settings.volume * 100); saveSettings(); }
 $('in-vol').value = settings.volume;
 $('lab-vol').textContent = Math.round(settings.volume);
 document.documentElement.style.setProperty('--ch', settings.crosshairColor);
+
+const MODE_NOTES = {
+  tactical: 'One life per round. No respawns, teams start apart, first to the round limit wins. Death drops you into spectator until the round ends.',
+  tdm: 'Two teams, respawns on, first team to the score limit.',
+  ffa: 'Everyone for themselves.',
+  gungame: 'Every kill promotes you one weapon up the ladder. Knife to finish.',
+};
+function syncModeUI() {
+  $('mode-note').textContent = MODE_NOTES[settings.mode] || '';
+  $('field-rounds').style.display = settings.mode === 'tactical' ? '' : 'none';
+  $('field-score').style.display = (settings.mode === 'tactical' || settings.mode === 'gungame') ? 'none' : '';
+}
+syncModeUI();
 
 // pause-menu duplicates
 function bindPauseRange(id, key, labId, transform = v => v) {
@@ -97,17 +127,75 @@ function bindPauseRange(id, key, labId, transform = v => v) {
     el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%');
     if (key === 'volume') setAudioVolume(settings[key] / 100);
     saveSettings();
-    // keep the main menu control in sync
     const main = $(id.replace('2', ''));
     if (main) { main.value = el.value; main.style.setProperty('--p', el.style.getPropertyValue('--p')); }
     const mainLab = $(labId.replace('2', ''));
     if (mainLab) mainLab.textContent = transform(settings[key]);
+    if (key === 'sens') showCm360();
   });
 }
 bindPauseRange('in-sens2', 'sens', 'lab-sens2', v => v.toFixed(2));
 bindPauseRange('in-vol2', 'volume', 'lab-vol2', v => Math.round(v));
 
-/* ---------- loadout grid ---------- */
+/* ================= keybinding UI ================= */
+function buildBindsUI() {
+  const list = $('binds-list');
+  list.innerHTML = '';
+  for (const group of ACTION_GROUPS) {
+    const actions = ACTIONS.filter(a => a.group === group);
+    if (!actions.length) continue;
+    const h = document.createElement('div');
+    h.className = 'bind-group';
+    h.textContent = group.toUpperCase();
+    list.appendChild(h);
+    for (const a of actions) {
+      const row = document.createElement('div');
+      row.className = 'bind-row';
+      row.innerHTML = `<span>${a.label}</span>`;
+      for (let slot = 0; slot < 2; slot++) {
+        const btn = document.createElement('button');
+        btn.className = 'bind-key';
+        btn.dataset.action = a.id; btn.dataset.slot = slot;
+        row.appendChild(btn);
+        btn.addEventListener('click', () => startCapture(a.id, slot, btn));
+        btn.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          clearBind(a.id, slot);
+          refreshBindsUI();
+        });
+      }
+      list.appendChild(row);
+    }
+  }
+  refreshBindsUI();
+}
+
+function refreshBindsUI() {
+  game?.hud?.refreshKeyHints();
+  for (const btn of document.querySelectorAll('.bind-key')) {
+    const code = (binds[btn.dataset.action] || [])[+btn.dataset.slot];
+    btn.textContent = codeLabel(code);
+    btn.classList.toggle('empty', !code);
+    btn.classList.toggle('dupe', !!code && conflicts(code, btn.dataset.action).length > 0);
+    btn.classList.remove('listening');
+  }
+}
+
+function startCapture(actionId, slot, btn) {
+  refreshBindsUI();
+  btn.textContent = 'PRESS…';
+  btn.classList.add('listening');
+  beginCapture(code => {
+    if (code) setBind(actionId, slot, code);
+    refreshBindsUI();
+    updateMenuFooter();
+  });
+}
+
+$('btn-binds-reset').addEventListener('click', () => { resetBinds(); refreshBindsUI(); updateMenuFooter(); });
+buildBindsUI();
+
+/* ================= loadout ================= */
 function buildLoadout() {
   const grid = $('loadout-grid');
   grid.innerHTML = '';
@@ -119,7 +207,7 @@ function buildLoadout() {
     const bar = (label, v, color) => `<div class="wstat"><i>${label}</i><div class="track"><b style="width:${Math.round(v * 100)}%;background:${color}"></b></div></div>`;
     card.innerHTML = `
       <h4 style="color:#${w.color.toString(16).padStart(6, '0')}">${w.name}</h4>
-      <div class="cls">${w.cls}</div>
+      <div class="cls">${w.cls} · ${Math.ceil(100 / w.dmg)} BODY SHOTS</div>
       ${bar('DMG', w.stats.dmg, '#ff6b7f')}
       ${bar('RATE', w.stats.rate, '#ffd60a')}
       ${bar('RANGE', w.stats.range, '#4cc9ff')}
@@ -156,15 +244,16 @@ function startMatch() {
   game.startMatch({
     mode: settings.mode, bots: Math.round(settings.bots),
     difficulty: settings.difficulty, scoreLimit: Math.round(settings.scoreLimit),
+    roundsToWin: Math.round(settings.roundsToWin),
   });
-  requestLock();
+  requestLock(settings.rawInput);
 }
 
 function resumeMatch() {
   if (!game || game.over) return;
   pause.classList.add('hidden');
   game.paused = false;
-  requestLock();
+  requestLock(settings.rawInput);
 }
 
 function pauseMatch() {
@@ -186,20 +275,19 @@ $('btn-quit').addEventListener('click', showMenu);
 $('btn-again').addEventListener('click', startMatch);
 $('btn-menu').addEventListener('click', showMenu);
 canvas.addEventListener('click', () => {
-  if (game && game.running && !game.paused && !game.over && !input.locked) requestLock();
+  if (game && game.running && !game.paused && !game.over && !input.locked) requestLock(settings.rawInput);
 });
 
 /* ================= end card ================= */
 function showEndcard(res) {
   endcard.classList.remove('hidden');
   const t = $('end-title');
-  t.textContent = res.title;
   t.classList.toggle('defeat', !res.won);
   t.innerHTML = res.won ? 'VICT<span>ORY</span>' : 'DEF<span>EAT</span>';
   const s = res.stats;
   $('end-stats').innerHTML = `
     <div class="estat"><b>${s.kills}</b><span>KILLS</span></div>
-    <div class="estat"><b>${s.deaths}</b><span>DEATHS</span></div>
+    <div class="estat"><b>${s.headshots}</b><span>HEADSHOTS</span></div>
     <div class="estat"><b>${s.acc}%</b><span>ACCURACY</span></div>
     <div class="estat"><b>${s.streak}</b><span>BEST STREAK</span></div>`;
   const rows = res.rows.map((r, i) => `
@@ -211,6 +299,12 @@ function showEndcard(res) {
   $('end-board').innerHTML =
     `<div class="sb-row hd"><span>#</span><span>PLAYER</span><span class="num">KILLS</span><span class="num">DEATHS</span><span class="num">K/D</span></div>` + rows;
   exitLock();
+}
+
+function updateMenuFooter() {
+  const k = id => codeLabel((binds[id] || [])[0]);
+  document.querySelector('.menu-foot').innerHTML =
+    `Headshots kill instantly · aim with <b>${k('aim')}</b> and stop moving to shoot straight · lean with <b>${k('leanLeft')}</b>/<b>${k('leanRight')}</b> · walk silently with <b>${k('walk')}</b>`;
 }
 
 /* ================= main loop ================= */
@@ -231,13 +325,13 @@ async function boot() {
   window.__mv = await import('./entities/movement.js');   // used by test/smoke.mjs
   game.onMatchEnd = showEndcard;
   game.hud.show(false);
-  // idle camera so the menu has a live backdrop
   game.player.pos.set(0, 8.2, 34);
   game.player.yaw = Math.PI; game.player.pitch = -0.12;
   game.camera.position.set(0, 9.4, 34);
   game.camera.rotation.set(-0.12, Math.PI, 0);
+  game.hud.refreshKeyHints();
+  updateMenuFooter();
   loading.classList.add('hidden');
-  $('menu-hint').textContent = `${game.nav.nodes.length} nav nodes · ${game.world.boxes.length} solids`;
   requestAnimationFrame(frame);
 }
 
