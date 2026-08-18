@@ -1,5 +1,7 @@
 // ============ persisted user settings ============
-const KEY = 'overclock.settings.v1';
+// v2: sensitivity units changed with the tactical rework, so old saves would
+// feel wildly wrong — start everyone on the retuned defaults.
+const KEY = 'overclock.settings.v2';
 
 export const settings = {
   // ---- aim ----
