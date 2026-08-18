@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>OVERCLOCK — Arena FPS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎯</text></svg>" />
+<link rel="stylesheet" href="./style.css" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+
+  <!-- ============ IN-GAME HUD ============ -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"><span class="ch ch-t"></span><span class="ch ch-b"></span><span class="ch ch-l"></span><span class="ch ch-r"></span><span class="ch-dot"></span></div>
+    <div id="hitmarker"><svg viewBox="0 0 40 40"><path d="M6 6 L14 14 M34 6 L26 14 M6 34 L14 26 M34 34 L26 26"/></svg></div>
+    <div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div></div>
+
+    <div id="dmg-vignette"></div>
+    <div id="hit-dirs"></div>
+    <div id="float-dmg"></div>
+
+    <div id="use-prompt" class="hidden"><b>E</b> PICK UP</div>
+    <div id="fps">0 FPS</div>
+
+    <div id="hud-bottom-left">
+      <div id="vitals">
+        <div class="vital">
+          <svg class="vic" viewBox="0 0 24 24"><path d="M12 21s-8-5.2-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.8-8 11-8 11z"/></svg>
+          <div class="bar"><div id="hp-fill" class="fill"></div></div>
+          <span id="hp-num">100</span>
+        </div>
+        <div class="vital" id="shield-row">
+          <svg class="vic" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/></svg>
+          <div class="bar"><div id="sh-fill" class="fill"></div></div>
+          <span id="sh-num">0</span>
+        </div>
+      </div>
+      <div id="streak-chip" class="hidden"><b id="streak-n">2</b> KILLSTREAK</div>
+    </div>
+
+    <div id="hud-bottom-right">
+      <div id="ammo">
+        <span id="ammo-mag">30</span><span id="ammo-sep">/</span><span id="ammo-res">120</span>
+      </div>
+      <div id="weapon-name">ASSAULT RIFLE</div>
+      <div id="reload-hint" class="hidden">PRESS <b>R</b> TO RELOAD</div>
+      <div id="reload-bar"><div id="reload-fill"></div></div>
+    </div>
+
+    <div id="weapon-wheel"></div>
+
+    <div id="hud-top-left">
+      <div id="minimap-wrap"><canvas id="minimap" width="360" height="360"></canvas><div id="mm-ring"></div></div>
+    </div>
+
+    <div id="hud-top">
+      <div id="score-strip">
+        <div class="team t-a"><span class="lbl" id="lbl-a">YOU</span><span class="val" id="score-a">0</span></div>
+        <div id="match-timer">10:00</div>
+        <div class="team t-b"><span class="val" id="score-b">0</span><span class="lbl" id="lbl-b">BOTS</span></div>
+      </div>
+      <div id="mode-tag">FREE FOR ALL — FIRST TO 30</div>
+    </div>
+
+    <div id="killfeed"></div>
+    <div id="center-toast"></div>
+    <div id="kill-popup"></div>
+    <div id="pickup-toast"></div>
+
+    <div id="scoreboard" class="hidden">
+      <div class="sb-head"><h2 id="sb-title">FREE FOR ALL</h2><span id="sb-sub">First to 30 kills</span></div>
+      <div id="sb-body"></div>
+      <div class="sb-foot">HOLD <b>TAB</b></div>
+    </div>
+
+    <div id="respawn" class="hidden">
+      <div class="rs-inner">
+        <div class="rs-killer">ELIMINATED BY <b id="rs-name">BOT</b></div>
+        <div class="rs-weapon" id="rs-weapon"></div>
+        <div class="rs-count">RESPAWNING IN <b id="rs-sec">3</b></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MENUS ============ -->
+  <div id="menu" class="overlay">
+    <div class="bg-grid"></div>
+    <div class="menu-card">
+      <h1 class="logo">OVER<span>CLOCK</span></h1>
+      <p class="tagline">fast-paced arena shooter · <span id="menu-hint">click to lock mouse</span></p>
+
+      <div class="menu-tabs">
+        <button class="tab active" data-tab="play">PLAY</button>
+        <button class="tab" data-tab="loadout">LOADOUT</button>
+        <button class="tab" data-tab="settings">SETTINGS</button>
+        <button class="tab" data-tab="controls">CONTROLS</button>
+      </div>
+
+      <section class="pane active" data-pane="play">
+        <div class="field">
+          <label>GAME MODE</label>
+          <div class="seg" id="sel-mode">
+            <button data-v="ffa" class="on">FREE FOR ALL</button>
+            <button data-v="tdm">TEAM DEATHMATCH</button>
+            <button data-v="gungame">GUN GAME</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>BOT COUNT — <b id="lab-bots">7</b></label>
+          <input type="range" id="in-bots" min="1" max="15" value="7" />
+        </div>
+        <div class="field">
+          <label>BOT DIFFICULTY</label>
+          <div class="seg" id="sel-diff">
+            <button data-v="easy">RECRUIT</button>
+            <button data-v="normal" class="on">REGULAR</button>
+            <button data-v="hard">VETERAN</button>
+            <button data-v="insane">NIGHTMARE</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>SCORE LIMIT — <b id="lab-score">30</b></label>
+          <input type="range" id="in-score" min="5" max="80" step="5" value="30" />
+        </div>
+        <button id="btn-play" class="big-btn">DEPLOY</button>
+      </section>
+
+      <section class="pane" data-pane="loadout">
+        <p class="pane-note">Pick your starting weapon. Swap in-game with <b>1</b>–<b>8</b> or the mouse wheel — every gun is on the ground somewhere.</p>
+        <div id="loadout-grid"></div>
+      </section>
+
+      <section class="pane" data-pane="settings">
+        <div class="field"><label>MOUSE SENSITIVITY — <b id="lab-sens">1.00</b></label><input type="range" id="in-sens" min="0.1" max="5" step="0.05" value="1" /></div>
+        <div class="field"><label>ADS SENSITIVITY MULT — <b id="lab-adssens">0.70</b></label><input type="range" id="in-adssens" min="0.1" max="1.5" step="0.05" value="0.7" /></div>
+        <div class="field"><label>FIELD OF VIEW — <b id="lab-fov">95</b></label><input type="range" id="in-fov" min="70" max="120" value="95" /></div>
+        <div class="field"><label>MASTER VOLUME — <b id="lab-vol">70</b></label><input type="range" id="in-vol" min="0" max="100" value="70" /></div>
+        <div class="field"><label>CROSSHAIR COLOR</label><div class="seg" id="sel-chcol">
+          <button data-v="#00ffa8" class="on" style="color:#00ffa8">MINT</button>
+          <button data-v="#ffffff" style="color:#fff">WHITE</button>
+          <button data-v="#ff2d55" style="color:#ff2d55">RED</button>
+          <button data-v="#ffd60a" style="color:#ffd60a">GOLD</button>
+          <button data-v="#4cc9ff" style="color:#4cc9ff">CYAN</button>
+        </div></div>
+        <div class="field"><label>QUALITY</label><div class="seg" id="sel-qual">
+          <button data-v="low">LOW</button><button data-v="med" class="on">MEDIUM</button><button data-v="high">HIGH</button>
+        </div></div>
+        <div class="field row-toggles">
+          <label class="chk"><input type="checkbox" id="in-shake" checked /> <span>Screen shake</span></label>
+          <label class="chk"><input type="checkbox" id="in-bob" checked /> <span>View bob</span></label>
+          <label class="chk"><input type="checkbox" id="in-blood" checked /> <span>Blood & impacts</span></label>
+          <label class="chk"><input type="checkbox" id="in-invert" /> <span>Invert Y</span></label>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="controls">
+        <div class="keys">
+          <div><b>W A S D</b><span>Move</span></div>
+          <div><b>SPACE</b><span>Jump / bunny-hop</span></div>
+          <div><b>SHIFT</b><span>Sprint</span></div>
+          <div><b>CTRL / C</b><span>Crouch — slide while sprinting</span></div>
+          <div><b>MOUSE 1</b><span>Fire</span></div>
+          <div><b>MOUSE 2</b><span>Aim down sights</span></div>
+          <div><b>R</b><span>Reload</span></div>
+          <div><b>1 – 8 / WHEEL</b><span>Switch weapon</span></div>
+          <div><b>Q</b><span>Quick-swap last weapon</span></div>
+          <div><b>E</b><span>Pick up weapon / use</span></div>
+          <div><b>F</b><span>Melee knife</span></div>
+          <div><b>TAB</b><span>Scoreboard</span></div>
+          <div><b>ESC</b><span>Pause</span></div>
+        </div>
+      </section>
+    </div>
+    <div class="menu-foot">Tip: shoot the <b>ammo crates</b> to top up · rocket-jump with the launcher · headshots do double damage</div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="menu-card small">
+      <h1 class="logo">PAUSED</h1>
+      <button id="btn-resume" class="big-btn">RESUME</button>
+      <button id="btn-restart" class="ghost-btn">RESTART MATCH</button>
+      <button id="btn-quit" class="ghost-btn">QUIT TO MENU</button>
+      <div class="field"><label>MOUSE SENSITIVITY — <b id="lab-sens2">1.00</b></label><input type="range" id="in-sens2" min="0.1" max="5" step="0.05" value="1" /></div>
+      <div class="field"><label>MASTER VOLUME — <b id="lab-vol2">70</b></label><input type="range" id="in-vol2" min="0" max="100" value="70" /></div>
+    </div>
+  </div>
+
+  <div id="endcard" class="overlay hidden">
+    <div class="menu-card">
+      <h1 id="end-title" class="logo">VICTORY</h1>
+      <div id="end-stats"></div>
+      <div id="end-board"></div>
+      <button id="btn-again" class="big-btn">PLAY AGAIN</button>
+      <button id="btn-menu" class="ghost-btn">MAIN MENU</button>
+    </div>
+  </div>
+
+  <div id="loading" class="overlay"><div class="loader"><div class="lbar"><i></i></div><span>BUILDING ARENA…</span></div></div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
