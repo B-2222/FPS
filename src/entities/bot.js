@@ -103,18 +103,19 @@ export class Bot extends Actor {
       return;
     }
 
-    if (g.frozen) { this.model.update(dt, this, g.camera.position); return; }
+    if (g.isFrozen(this)) { this.model.update(dt, this, g.camera.position); return; }
 
     this.arsenal.update(dt);
     this.senseT -= dt; this.repathT -= dt; this.pickupCd -= dt;
     if (this.senseT <= 0) { this.senseT = rand(0.1, 0.18); this.sense(); }
 
     // fresh line of sight every frame while engaged (cheap; broadphase-backed)
-    if (this.target && this.target.alive) {
+    const blinded = (this.blindUntil || 0) > g.time;
+    if (this.target && this.target.alive && !blinded) {
       this.eyePos(_eye);
       _v.set(this.target.pos.x, this.target.pos.y + this.target.height * 0.6, this.target.pos.z);
       const dist = _eye.distanceTo(_v);
-      this.canSee = dist <= this.cfg.sight && g.world.losClear(_eye, _v);
+      this.canSee = dist <= this.cfg.sight && g.canSee(_eye, _v);
       if (this.canSee) { this.lastSeen.copy(this.target.pos); this.lastSeenT = g.time; this.trackTime += dt; }
       else this.trackTime = Math.max(0, this.trackTime - dt * 2);
       this.targetDist = dist;
@@ -131,6 +132,7 @@ export class Bot extends Actor {
     this.move(dt);
     this.shoot(dt);
     this.manageWeapon(dt);
+    this.useOperatorKit(dt);
 
     this.model.update(dt, this, g.camera.position);
     this.model.setWeapon(this.arsenal.current);
@@ -139,6 +141,7 @@ export class Bot extends Actor {
   /* ---------- perception ---------- */
   sense() {
     const g = this.game;
+    if ((this.blindUntil || 0) > g.time) { this.canSee = false; return; }
     this.eyePos(_eye);
     let best = null, bestScore = Infinity;
     const fwd = _v2.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
@@ -152,7 +155,7 @@ export class Bot extends Actor {
       const toA = _v.clone().sub(_eye).normalize();
       const inFov = (toA.x * fwd.x + toA.z * fwd.z) > fovCos || d < 7;
       if (!inFov) continue;
-      if (!g.world.losClear(_eye, _v)) continue;
+      if (!g.canSee(_eye, _v)) continue;
       let score = d;
       if (a === this.target) score -= 14;               // target stickiness
       if (a === this.lastAttacker) score -= 8;
@@ -298,7 +301,15 @@ export class Bot extends Actor {
     let forward = 0, strafe = 0, jump = false, sprint = false, crouch = false;
 
     let goal = null;
-    if (this.state === 'engage' && this.target) goal = null;                 // handled below
+    // the objective outranks wandering: attackers push the site, defenders hold it
+    const obj = g.cfg?.mode === 'siege' ? g.siege.goalFor(this) : null;
+    if (obj && (!this.target || !this.canSee)) {
+      goal = obj.pos;
+      this.objAction = obj.action;
+      this.objRadius = obj.radius;
+    } else this.objAction = null;
+
+    if (this.state === 'engage' && this.target) goal = goal || null;         // handled below
     else if (this.state === 'hunt') goal = this.lastSeen;
     else if (this.state === 'pickup' && this.pickupTarget) goal = this.pickupTarget.pos;
     else if (this.state === 'cover') {
@@ -400,8 +411,15 @@ export class Bot extends Actor {
       this.lastPosCheck.copy(this.pos); this.stuckT = 0;
     }
 
+    // standing on the objective doing the job: stop moving and work
+    if (this.objAction && !this.canSee && goal && this.pos.distanceTo(goal) < (this.objRadius ?? 2.5)) {
+      const r = g.siege.interact(this, dt);
+      if (r) { forward = 0; strafe = 0; sprint = false; this.working = true; }
+      else this.working = false;
+    } else this.working = false;
+
     this.moveDir = _v2.set(-Math.sin(this.yaw) * forward, 0, -Math.cos(this.yaw) * forward).clone();
-    stepMovement(this, { forward, strafe, jump, sprint, crouch }, dt, g.world, g);
+    stepMovement(this, { forward, strafe, jump, sprint, crouch, slow: false, lean: 0 }, dt, g.world, g);
 
     // footsteps for nearby ears
     if (this.grounded && this.speed > 2) {
@@ -490,7 +508,8 @@ export class Bot extends Actor {
       this.eyePos(_eye);
       this.dirVec(_v);
       const wall = g.world.raycast(_eye, _v, Math.min(this.targetDist ?? 60, 60));
-      if (wall && wall.dist < (this.targetDist ?? 60) - 0.8) return;
+      if (wall && wall.dist < (this.targetDist ?? 60) - 0.8 && !wall.box?.soft) return;
+      if (g.gadgets.blocksSight(_eye, _v.clone().multiplyScalar(this.targetDist ?? 20).add(_eye))) return;
       // rockets at point blank = suicide
       if (w.projectile && (this.targetDist ?? 99) < 6.5) return;
     }
@@ -510,6 +529,22 @@ export class Bot extends Actor {
       this.pauseT = rand(w.botPause[0], w.botPause[1]) * this.cfg.burstMult;
       this.burstLeft = 0;
     }
+  }
+
+  /** operators use their kit: defenders fortify in prep, attackers open walls */
+  useOperatorKit(dt) {
+    const g = this.game;
+    if (g.cfg?.mode !== 'siege' || !this.operator || this.abilityCharges <= 0) return;
+    this.kitT = (this.kitT ?? rand(1, 4)) - dt;
+    if (this.kitT > 0) return;
+    this.kitT = rand(3, 7);
+    const side = g.sideOf(this);
+    const inPrep = g.siege.phase === 'prep';
+    if (side === 'def' && !inPrep && Math.random() < 0.5) return;
+    if (side === 'atk' && inPrep) return;
+    if (side === 'atk' && (this.targetDist ?? 99) < 12) return;   // not mid-fight
+    const res = g.gadgets.useAbility(this, this.operator);
+    if (res.ok) this.abilityCharges--;
   }
 
   /* ---------- weapon housekeeping ---------- */

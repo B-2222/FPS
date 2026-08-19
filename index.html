@@ -20,6 +20,8 @@
     <div id="hitmarker"><svg viewBox="0 0 40 40"><path d="M6 6 L14 14 M34 6 L26 14 M6 34 L14 26 M34 34 L26 26"/></svg></div>
     <div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div></div>
 
+    <div id="flash-overlay"></div>
+    <div id="optic-reticle" class="hidden" data-kind="dot"></div>
     <div id="dmg-vignette"></div>
     <div id="hit-dirs"></div>
     <div id="float-dmg"></div>
@@ -28,6 +30,9 @@
     <div id="fps">0 FPS</div>
 
     <div id="prep" class="hidden"><span>ROUND STARTS IN</span><b id="prep-num">4</b></div>
+    <div id="objective" class="hidden"></div>
+    <div id="interact" class="hidden"><span id="interact-label">PLANTING</span><div class="ibar"><i id="interact-fill"></i></div></div>
+    <div id="cam-view" class="hidden">CAMERA — <b id="cam-name">FRONT YARD</b><i>B to cycle · move to exit</i></div>
     <div id="spectating" class="hidden">SPECTATING <b id="spec-name">—</b><i>click for next</i></div>
 
     <div id="hud-bottom-left">
@@ -44,6 +49,8 @@
         </div>
       </div>
       <div id="stance">STAND</div>
+      <div id="op-badge"></div>
+      <div id="gadget-list"></div>
       <div id="streak-chip" class="hidden"><b id="streak-n">2</b> KILLSTREAK</div>
     </div>
 
@@ -101,7 +108,8 @@
 
       <div class="menu-tabs">
         <button class="tab active" data-tab="play">PLAY</button>
-        <button class="tab" data-tab="loadout">LOADOUT</button>
+        <button class="tab" data-tab="operators">OPERATORS</button>
+        <button class="tab" data-tab="armoury">ARMOURY</button>
         <button class="tab" data-tab="aim">AIM</button>
         <button class="tab" data-tab="video">GAME</button>
         <button class="tab" data-tab="controls">CONTROLS</button>
@@ -111,7 +119,8 @@
         <div class="field">
           <label>GAME MODE</label>
           <div class="seg" id="sel-mode">
-            <button data-v="tactical" class="on">TACTICAL</button>
+            <button data-v="siege" class="on">SIEGE</button>
+            <button data-v="tactical">TACTICAL</button>
             <button data-v="tdm">TEAM DEATHMATCH</button>
             <button data-v="ffa">FREE FOR ALL</button>
             <button data-v="gungame">GUN GAME</button>
@@ -142,9 +151,29 @@
         <button id="btn-play" class="big-btn">DEPLOY</button>
       </section>
 
-      <section class="pane" data-pane="loadout">
-        <p class="pane-note">Your starting weapon. Every gun is also on the ground somewhere — walk over one and press <b>F</b>.</p>
-        <div id="loadout-grid"></div>
+      <section class="pane" data-pane="operators">
+        <p class="pane-note">Pick who you play on each side in Siege. Armour raises health and costs speed. Other modes use your armoury loadout instead.</p>
+        <h3 class="sec">ATTACK</h3>
+        <div id="op-grid-atk" class="op-grid"></div>
+        <h3 class="sec">DEFENCE</h3>
+        <div id="op-grid-def" class="op-grid"></div>
+      </section>
+
+      <section class="pane" data-pane="armoury">
+        <div class="armoury-head">
+          <p class="pane-note">Earn credits from kills and matches, then kit out each gun. Attachments are permanent once bought.</p>
+          <div class="credits">CREDITS <b id="credit-balance">0</b></div>
+        </div>
+        <div class="field">
+          <label>WEAPON</label>
+          <div class="seg" id="sel-gun"></div>
+        </div>
+        <p class="pane-note" id="gun-summary"></p>
+        <div id="attach-slots"></div>
+        <div class="field" style="margin-top:14px">
+          <label>DEFAULT WEAPON (non-Siege modes)</label>
+          <div class="seg" id="sel-default-gun"></div>
+        </div>
       </section>
 
       <section class="pane" data-pane="aim">

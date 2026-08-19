@@ -307,6 +307,24 @@ export class FX {
     }
   }
 
+  /** dense, slow smoke that actually sits in a doorway */
+  smokePuff(pos, alpha = 1) {
+    _c.setHex(0x9aa3ad).multiplyScalar(0.5 + alpha * 0.5);
+    _v.set(rand(-0.25, 0.25), rand(-0.05, 0.35), rand(-0.25, 0.25));
+    this.parts.spawn(pos, _v, _c, rand(0.9, 1.7), rand(1.4, 2.6), -0.15, 0.9);
+  }
+
+  /** flashbang detonation */
+  flashBurst(pos) {
+    this.flashes.add(pos, 1.2, 0xffffff, 0.28, 5);
+    this.pointLight(pos, 0xffffff, 90, 0.3);
+    _c.setHex(0xffffff);
+    for (let i = 0; i < Math.round(30 * this.scale); i++) {
+      _v.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(6, 20));
+      this.parts.spawn(pos, _v, _c, rand(0.08, 0.24), rand(0.15, 0.4), 4, 3);
+    }
+  }
+
   /** rising smoke from a fired rocket */
   smokeTrail(pos) {
     _c.setHex(0x8a8f98);

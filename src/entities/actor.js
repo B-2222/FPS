@@ -289,8 +289,8 @@ export class Arsenal {
    * standing still is genuinely more accurate than shuffling — stopping to
    * shoot is a decision the player makes, not a state they toggle.
    */
-  currentSpread(speedFrac, airborne, ads, crouch) {
-    const w = this.def;
+  currentSpread(speedFrac, airborne, ads, crouch, defOverride) {
+    const w = defOverride || this.def;
     let s = ads ? w.adsSpread : w.hipSpread;
     if (airborne) s += w.airPenalty;
     else {

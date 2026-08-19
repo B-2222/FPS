@@ -7,7 +7,9 @@ import {
   setBind, clearBind, conflicts, codeLabel,
 } from './core/keybinds.js';
 import { audio, setAudioVolume } from './core/audio.js';
-import { WEAPON_IDS, WEAPONS } from './weapons/defs.js';
+import { WEAPON_IDS, WEAPONS, getWeapon } from './weapons/defs.js';
+import { ATTACKERS, DEFENDERS, GADGET_INFO } from './game/operators.js';
+import { ATTACHMENTS, SLOTS, SLOT_LABEL, attachmentById, resolveWeapon, DEFAULT_LOADOUT } from './weapons/attachments.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('scene');
@@ -106,6 +108,7 @@ $('lab-vol').textContent = Math.round(settings.volume);
 document.documentElement.style.setProperty('--ch', settings.crosshairColor);
 
 const MODE_NOTES = {
+  siege: 'Attack and defend a house. Attackers plant the defuser on site, defenders stop them or pull it out. One life per round, sides swap every round, walls are destructible.',
   tactical: 'One life per round. No respawns, teams start apart, first to the round limit wins. Death drops you into spectator until the round ends.',
   tdm: 'Two teams, respawns on, first team to the score limit.',
   ffa: 'Everyone for themselves.',
@@ -113,8 +116,9 @@ const MODE_NOTES = {
 };
 function syncModeUI() {
   $('mode-note').textContent = MODE_NOTES[settings.mode] || '';
-  $('field-rounds').style.display = settings.mode === 'tactical' ? '' : 'none';
-  $('field-score').style.display = (settings.mode === 'tactical' || settings.mode === 'gungame') ? 'none' : '';
+  const rounds = settings.mode === 'tactical' || settings.mode === 'siege';
+  $('field-rounds').style.display = rounds ? '' : 'none';
+  $('field-score').style.display = (rounds || settings.mode === 'gungame') ? 'none' : '';
 }
 syncModeUI();
 
@@ -195,9 +199,128 @@ function startCapture(actionId, slot, btn) {
 $('btn-binds-reset').addEventListener('click', () => { resetBinds(); refreshBindsUI(); updateMenuFooter(); });
 buildBindsUI();
 
+/* ================= operators ================= */
+function pips(label, n) {
+  return `<div class="pips"><span>${label}</span>${[1, 2, 3].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</div>`;
+}
+
+function buildOperators() {
+  for (const [gridId, list, key] of [['op-grid-atk', ATTACKERS, 'operatorAtk'], ['op-grid-def', DEFENDERS, 'operatorDef']]) {
+    const grid = $(gridId);
+    if (!grid) continue;
+    grid.innerHTML = '';
+    for (const op of list) {
+      const card = document.createElement('button');
+      card.className = 'opcard' + (settings[key] === op.id ? ' on' : '');
+      card.dataset.id = op.id;
+      const hex = '#' + op.colour.toString(16).padStart(6, '0');
+      card.innerHTML = `
+        <h4 style="color:${hex}">${op.name}</h4>
+        <div class="role">${op.role}</div>
+        <div class="kit">
+          <b>${getWeapon(op.primary).name}</b> + ${getWeapon(op.secondary).name}<br>
+          ${op.ability.name} ×${op.ability.charges}<br>
+          ${GADGET_INFO[op.gadget.id].name} ×${op.gadget.count}
+        </div>
+        ${pips('ARMOUR', op.armour)}${pips('SPEED', op.speed)}
+        <div class="blurb">${op.blurb}</div>`;
+      card.addEventListener('click', () => {
+        settings[key] = op.id; saveSettings();
+        grid.querySelectorAll('.opcard').forEach(c => c.classList.toggle('on', c.dataset.id === op.id));
+        audio.init(); audio.click(null, { freq: 1100, dur: 0.05, vol: 0.2 });
+      });
+      grid.appendChild(card);
+    }
+  }
+}
+buildOperators();
+
+/* ================= armoury ================= */
+let armouryGun = WEAPON_IDS[0];
+
+function gunLoadout(id) {
+  if (!settings.gunLoadouts) settings.gunLoadouts = {};
+  if (!settings.gunLoadouts[id]) settings.gunLoadouts[id] = { ...DEFAULT_LOADOUT };
+  return settings.gunLoadouts[id];
+}
+const ownedKey = (slot, id) => `${slot}:${id}`;
+const isOwned = (slot, a) => a.cost === 0 || !!settings.owned?.[ownedKey(slot, a.id)];
+
+function buildArmoury() {
+  const gunSeg = $('sel-gun');
+  if (!gunSeg) return;
+  gunSeg.innerHTML = '';
+  for (const id of WEAPON_IDS) {
+    const btn = document.createElement('button');
+    btn.textContent = WEAPONS[id].name;
+    btn.className = id === armouryGun ? 'on' : '';
+    btn.addEventListener('click', () => { armouryGun = id; buildArmoury(); });
+    gunSeg.appendChild(btn);
+  }
+
+  const defSeg = $('sel-default-gun');
+  defSeg.innerHTML = '';
+  for (const id of WEAPON_IDS) {
+    const btn = document.createElement('button');
+    btn.textContent = WEAPONS[id].name;
+    btn.className = settings.loadout === id ? 'on' : '';
+    btn.addEventListener('click', () => { settings.loadout = id; saveSettings(); buildArmoury(); });
+    defSeg.appendChild(btn);
+  }
+
+  $('credit-balance').textContent = Math.round(settings.credits || 0);
+
+  const lo = gunLoadout(armouryGun);
+  const base = WEAPONS[armouryGun];
+  const res = resolveWeapon(base, lo);
+  $('gun-summary').innerHTML =
+    `<b>${base.name}</b> — ${Math.ceil(100 / res.dmg)} body shots · ${res.mag} rounds · ` +
+    `${(res.adsTime * 1000).toFixed(0)} ms to aim · recoil ${Math.round((res.recoilVMul ?? 1) * 100)}% vertical, ` +
+    `${Math.round((res.recoilHMul ?? 1) * 100)}% horizontal`;
+
+  const wrap = $('attach-slots');
+  wrap.innerHTML = '';
+  for (const slot of SLOTS) {
+    const div = document.createElement('div');
+    div.className = 'aslot';
+    div.innerHTML = `<h5>${SLOT_LABEL[slot]}</h5><div class="aopts"></div>`;
+    const opts = div.querySelector('.aopts');
+    for (const a of ATTACHMENTS[slot]) {
+      const owned = isOwned(slot, a);
+      const equipped = lo[slot] === a.id;
+      const btn = document.createElement('button');
+      btn.className = 'aopt' + (equipped ? ' on' : '') + (owned ? ' owned' : ' locked');
+      btn.innerHTML = `<b>${a.name}</b><span>${a.desc || '—'}</span>` +
+        `<em>${owned ? (equipped ? 'EQUIPPED' : 'OWNED') : a.cost + ' CR'}</em>`;
+      btn.addEventListener('click', () => {
+        audio.init();
+        if (!owned) {
+          if ((settings.credits || 0) < a.cost) {
+            audio.click(null, { freq: 300, dur: 0.1, vol: 0.25 });
+            $('gun-summary').innerHTML = `<span style="color:var(--red)">NOT ENOUGH CREDITS — need ${a.cost}, you have ${Math.round(settings.credits || 0)}</span>`;
+            return;
+          }
+          settings.credits -= a.cost;
+          settings.owned = settings.owned || {};
+          settings.owned[ownedKey(slot, a.id)] = true;
+          audio.tone(760, 0.12, 0.25, 'sine', 1200);
+        } else audio.click(null, { freq: 1100, dur: 0.05, vol: 0.2 });
+        lo[slot] = a.id;
+        saveSettings();
+        buildArmoury();
+        if (game?.player) game.viewModel.setWeapon(game.player.arsenal.current, game.resolvedWeapon(game.player));
+      });
+      opts.appendChild(btn);
+    }
+    wrap.appendChild(div);
+  }
+}
+buildArmoury();
+
 /* ================= loadout ================= */
 function buildLoadout() {
   const grid = $('loadout-grid');
+  if (!grid) return;
   grid.innerHTML = '';
   for (const id of WEAPON_IDS) {
     const w = WEAPONS[id];
@@ -289,7 +412,8 @@ function showEndcard(res) {
     <div class="estat"><b>${s.kills}</b><span>KILLS</span></div>
     <div class="estat"><b>${s.headshots}</b><span>HEADSHOTS</span></div>
     <div class="estat"><b>${s.acc}%</b><span>ACCURACY</span></div>
-    <div class="estat"><b>${s.streak}</b><span>BEST STREAK</span></div>`;
+    <div class="estat"><b style="color:var(--gold)">+${Math.round(res.credits || 0)}</b><span>CREDITS EARNED</span></div>`;
+  buildArmoury();
   const rows = res.rows.map((r, i) => `
     <div class="sb-row ${r.isMe ? 'me' : ''} ${r.team === 0 ? 'teamA' : 'teamB'}">
       <span>${i + 1}</span><span class="n">${r.name}</span>

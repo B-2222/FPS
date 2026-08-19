@@ -45,7 +45,7 @@ export class World {
       if (!arr) continue;
       for (let i = 0; i < arr.length; i++) {
         const b = arr[i];
-        if (b._s === stamp) continue;
+        if (b._s === stamp || b.dead) continue;      // destroyed geometry stops colliding
         b._s = stamp; out.push(b);
       }
     }
@@ -106,6 +106,40 @@ export class World {
     return out;
   }
 
+  /** damage a breakable box; returns true if it was destroyed by this hit */
+  damageBox(box, dmg) {
+    if (!box || !box.breakable || box.dead) return false;
+    box.hp = (box.hp ?? 100) - dmg;
+    if (box.hp > 0) return false;
+    this.destroyBox(box);
+    return true;
+  }
+
+  destroyBox(box) {
+    if (box.dead) return;
+    box.dead = true;
+    if (box.inst && box.instIndex !== undefined) {
+      _m4.makeScale(0, 0, 0);
+      box.inst.setMatrixAt(box.instIndex, _m4);
+      box.inst.instanceMatrix.needsUpdate = true;
+    }
+    this.onDestroy?.(box);
+  }
+
+  /** everything breakable whose volume is within `r` of a point */
+  breakablesNear(p, r, out = []) {
+    out.length = 0;
+    const c = this.query(p.x - r, p.z - r, p.x + r, p.z + r, _scratchA);
+    for (const b of c) {
+      if (!b.breakable || b.dead) continue;
+      const cx = Math.max(b.min.x, Math.min(p.x, b.max.x));
+      const cy = Math.max(b.min.y, Math.min(p.y, b.max.y));
+      const cz = Math.max(b.min.z, Math.min(p.z, b.max.z));
+      if ((cx - p.x) ** 2 + (cy - p.y) ** 2 + (cz - p.z) ** 2 <= r * r) out.push(b);
+    }
+    return out;
+  }
+
   /** cheap yes/no line-of-sight between two points */
   losClear(a, b) {
     _v1.subVectors(b, a);
@@ -121,6 +155,7 @@ const _rayOut2 = { dist: 0, point: new THREE.Vector3(), normal: new THREE.Vector
 const _scratchA = [];
 const _scratchB = [];
 const _v1 = new THREE.Vector3();
+const _m4 = new THREE.Matrix4();
 
 /**
  * Move a character volume (vertical cylinder approximated by an AABB) through the world.

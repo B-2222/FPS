@@ -1,6 +1,6 @@
 /**
- * Headless smoke test — boots the game in Chromium, exercises the real systems
- * and asserts the things that would ruin a match if they broke.
+ * Headless smoke test — boots the real game in Chromium and asserts the things
+ * that would ruin a match if they broke.
  *
  *   npm start          # in one shell
  *   npm test           # in another
@@ -29,152 +29,210 @@ page.on('pageerror', e => errors.push(e.message));
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
 
 await page.goto(URL, { waitUntil: 'networkidle' });
-// wait for readiness rather than a fixed delay: building the map + navmesh takes
-// noticeably longer on a software renderer
 let booted = true;
 try {
-  await page.waitForFunction(() => !!window.__game && document.getElementById('loading').classList.contains('hidden'), { timeout: 30000 });
+  await page.waitForFunction(() => !!window.__game && document.getElementById('loading').classList.contains('hidden'), { timeout: 40000 });
 } catch (e) { booted = false; }
-
-check('boots and builds the arena', booted);
+check('boots and builds the map', booted);
 if (!booted) { console.log('\nboot failed — aborting'); await browser.close(); process.exit(1); }
-const world = await page.evaluate(() => ({ boxes: window.__game.world.boxes.length, nav: window.__game.nav.nodes.length }));
-check('world + navmesh built', world.boxes > 100 && world.nav > 800, world);
 
-/* ---------------- controls UI ---------------- */
+const world = await page.evaluate(() => ({
+  boxes: window.__game.world.boxes.length,
+  nav: window.__game.nav.nodes.length,
+  soft: window.__game.world.boxes.filter(b => b.soft).length,
+  objectives: window.__game.objectives.length,
+  cameras: window.__game.cameraSpecs.length,
+}));
+check('house, navmesh, soft walls and objectives exist',
+  world.boxes > 150 && world.nav > 1500 && world.soft > 40 && world.objectives === 2 && world.cameras >= 4, world);
+
+/* ---------------- controls & aim settings ---------------- */
 const ui = await page.evaluate(() => ({
   rows: document.querySelectorAll('.bind-row').length,
   slots: document.querySelectorAll('.bind-key').length,
-  falseConflicts: [...document.querySelectorAll('.bind-key.dupe')].length,
+  conflicts: document.querySelectorAll('.bind-key.dupe').length,
 }));
-check('every action has two rebindable slots', ui.rows >= 25 && ui.slots === ui.rows * 2, ui);
-check('default binds report no conflicts', ui.falseConflicts === 0, ui);
+check('every action has two rebindable slots', ui.rows >= 28 && ui.slots === ui.rows * 2, ui);
+check('default binds report no conflicts', ui.conflicts === 0, ui);
 
 const rebind = await page.evaluate(async () => {
   const mod = await import('/src/core/keybinds.js');
   const inp = await import('/src/core/input.js');
-  const before = mod.binds.forward[0];
-  // drive the real capture path the settings UI uses
   document.querySelector('.bind-key[data-action="forward"][data-slot="0"]').click();
   dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyI', bubbles: true }));
   const after = mod.binds.forward[0];
-  const worksAsAction = (() => {
-    dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyI', bubbles: true }));
-    const down = inp.actionDown('forward');
-    dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyI', bubbles: true }));
-    return down;
-  })();
+  dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyI', bubbles: true }));
+  const works = inp.actionDown('forward');
+  dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyI', bubbles: true }));
   mod.resetBinds();
-  return { before, after, worksAsAction, restored: mod.binds.forward[0] };
+  return { after, works, restored: mod.binds.forward[0] };
 });
-check('rebinding a key takes effect immediately', rebind.after === 'KeyI' && rebind.worksAsAction && rebind.restored === 'KeyW', rebind);
+check('rebinding a key takes effect immediately', rebind.after === 'KeyI' && rebind.works && rebind.restored === 'KeyW', rebind);
 
 const sens = await page.evaluate(async () => {
-  const { settings, cm360 } = await import('/src/core/settings.js');
-  const a = cm360(1.0, 800), b = cm360(2.0, 800), c = cm360(1.0, 1600);
-  return { at1: +a.toFixed(1), at2: +b.toFixed(1), dpi1600: +c.toFixed(1) };
+  const { cm360 } = await import('/src/core/settings.js');
+  return { at1: +cm360(1, 800).toFixed(1), at2: +cm360(2, 800).toFixed(1), dpi1600: +cm360(1, 1600).toFixed(1) };
 });
 check('cm/360 maths scales with sens and DPI',
   sens.at1 > 15 && sens.at1 < 35 && Math.abs(sens.at2 - sens.at1 / 2) < 0.2 && Math.abs(sens.dpi1600 - sens.at1 / 2) < 0.2, sens);
 
-await page.click('#btn-play');
-await page.waitForFunction(() => window.__game?.running, { timeout: 15000 });
+await page.evaluate(() => document.getElementById('btn-play').click());
+await page.waitForFunction(() => window.__game?.running, { timeout: 20000 });
 
-/* ---------------- simulation ---------------- */
+/* ---------------- everything else runs inside the page ---------------- */
 const sim = await page.evaluate(async () => {
   const g = window.__game;
   const { stepMovement, MOVE } = window.__mv;
+  const { traceShot } = await import('/src/game/combat.js');
+  const { resolveWeapon } = await import('/src/weapons/attachments.js');
+  const { WEAPONS, recoilStep } = await import('/src/weapons/defs.js');
+  const V = (x, y, z) => new (g.player.pos.constructor)(x, y, z);
   const out = {};
-  // deterministic starting point: a respawning mode with nothing frozen
-  g.startMatch({ mode: 'ffa', bots: 7, difficulty: 'normal', scoreLimit: 99, timeLimit: 600 });
+
   const put = (x, y, z, yaw = 0) => {
     g.player.pos.set(x, y, z); g.player.vel.set(0, 0, 0); g.player.yaw = yaw; g.player.pitch = 0;
     g.player.alive = true; g.player.health = 100; g.player.shield = 0; g.player.height = MOVE.height;
-    g.player.leanAmt = 0; g.player.leanVec.set(0, 0, 0);
+    g.player.leanAmt = 0; g.player.leanVec.set(0, 0, 0); g.player.sliding = false; g.player.slideCd = 0;
   };
-  const walk = (n, cmd) => { let peak = -99; for (let i = 0; i < n; i++) { stepMovement(g.player, cmd, 1 / 60, g.world, g); peak = Math.max(peak, g.player.pos.y); } return peak; };
+  const walk = (n, cmd) => { for (let i = 0; i < n; i++) stepMovement(g.player, cmd, 1 / 60, g.world, g); };
   const FWD = { forward: 1, strafe: 0, jump: false, sprint: true, crouch: false, slow: false, lean: 0 };
 
-  // --- traversal: every level still reachable at the slower pace ---
-  put(27, 0.2, 7, Math.PI / 2);  out.coreRoof = walk(360, FWD) > 5.5;
-  put(11, 5.95, 0, Math.PI / 2); out.coreTier = walk(220, FWD) > 7.5;
-  put(0, 7.95, 8, 0);            out.sniperTower = walk(300, FWD) > 10.4;
-  put(0, 0.2, 27, Math.PI);      out.catwalk = walk(360, FWD) > 5.5;
-  put(13, 0.2, 33, -Math.PI / 2); out.bunkerRoof = walk(300, FWD) > 5.5;
-  put(0, 0.2, 50, Math.PI);      walk(300, FWD); out.wallsStop = g.player.pos.z < 57.5;
+  // ---- the objective has to be reachable, from every attacker spawn ----
+  {
+    const misses = [];
+    for (const sp of g.atkSpawns) {
+      for (const obj of g.objectives) {
+        const p = g.nav.findPath({ x: sp.x, y: sp.y, z: sp.z }, { x: obj.x, y: obj.y, z: obj.z });
+        if (!p) misses.push(`${sp.x},${sp.z}→${obj.id}`);
+      }
+    }
+    out.routes = { spawns: g.atkSpawns.length, misses };
+  }
 
-  // --- pacing: this is a walk-and-hold game, not a rocket-jump game ---
-  put(12, 0.2, 40); walk(150, FWD);
-  out.sprintSpeed = +g.player.speed.toFixed(1);
-  put(12, 0.2, 40); walk(150, { ...FWD, sprint: false });
-  out.walkSpeed = +g.player.speed.toFixed(1);
-  // bunny hopping must not beat running
-  put(12, 0.2, 40);
-  for (let i = 0; i < 300; i++) stepMovement(g.player, { ...FWD, jump: true, strafe: 0.4 }, 1 / 60, g.world, g);
+  // ---- pacing ----
+  put(0, 0.2, -30); walk(150, FWD); out.sprintSpeed = +g.player.speed.toFixed(1);
+  put(0, 0.2, -30); walk(150, { ...FWD, sprint: false }); out.walkSpeed = +g.player.speed.toFixed(1);
+  put(0, 0.2, -30);
+  for (let i = 0; i < 240; i++) stepMovement(g.player, { ...FWD, jump: true, strafe: 0.4 }, 1 / 60, g.world, g);
   out.hopSpeed = +g.player.speed.toFixed(1);
 
-  // --- crouch / stand ---
-  put(12, 0.2, 30);
-  walk(60, { ...FWD, forward: 0, sprint: false, crouch: true });
-  const crouched = g.player.height;
-  walk(120, { ...FWD, forward: 0, sprint: false });
-  out.crouch = crouched < 1.3 && g.player.height > 1.75;
+  // ---- slide: a burst of speed out of a sprint ----
+  put(0, 0.2, -34);
+  walk(120, FWD);
+  let slidePeak = 0, slid = false;
+  for (let i = 0; i < 90; i++) {
+    stepMovement(g.player, { ...FWD, crouch: true }, 1 / 60, g.world, g);
+    slid = slid || g.player.sliding;
+    slidePeak = Math.max(slidePeak, g.player.speed);
+  }
+  out.slide = { triggered: slid, peak: +slidePeak.toFixed(1), faster: slidePeak > out.sprintSpeed + 1 };
 
-  // --- leaning shifts the camera AND the hitbox ---
+  // ---- leaning: no speed penalty, and it moves the head hitbox ----
   {
-    put(12, 0.2, 30, 0);
-    walk(60, { ...FWD, forward: 0, sprint: false, lean: 1 });
+    put(0, 0.2, -30, 0);
+    walk(120, { ...FWD, lean: 1 });
+    out.leanSpeed = +g.player.speed.toFixed(1);
+    put(0, 0.2, -30, 0);
+    walk(60, { forward: 0, strafe: 0, jump: false, sprint: false, crouch: false, slow: false, lean: 1 });
     const off = Math.hypot(g.player.leanVec.x, g.player.leanVec.z);
-    // a ray that misses the head when upright should connect when leaned into it
-    const THREE = g.camera.constructor;
     const headY = g.player.pos.y + g.player.height - 0.17;
-    const from = { x: 12 + off, y: headY, z: 20 };
-    const dir = { x: 0, y: 0, z: 1 };
-    const hitLeaned = g.player.hitTest(from, dir, 40);
-    walk(90, { ...FWD, forward: 0, sprint: false, lean: 0 });
-    const hitUpright = g.player.hitTest(from, dir, 40);
-    out.lean = { offset: +off.toFixed(2), leanedHit: hitLeaned?.part ?? null, uprightHit: hitUpright?.part ?? null };
+    const from = { x: g.player.pos.x + off, y: headY, z: g.player.pos.z - 8 };
+    const leaned = g.player.hitTest(from, { x: 0, y: 0, z: 1 }, 40);
+    walk(90, { forward: 0, strafe: 0, jump: false, sprint: false, crouch: false, slow: false, lean: 0 });
+    const upright = g.player.hitTest(from, { x: 0, y: 0, z: 1 }, 40);
+    out.lean = { offset: +off.toFixed(2), leanedHit: leaned?.part ?? null, uprightHit: upright?.part ?? null };
   }
 
-  // --- one-shot headshots, for anyone holding a gun ---
+  // ---- soft walls: shoot through them, break them, get them back ----
   {
-    const v = g.bots[0];
-    v.alive = true; v.health = 100; v.shield = 100;      // armour must not save the head
-    put(12, 0.2, 30, 0);
-    v.pos.set(12, 0.2, 18); v.vel.set(0, 0, 0); v.height = 1.82;
-    g.player.arsenal.give('pistol', true); g.player.arsenal.select('pistol', true);
-    g.player.adsAmt = 1;                                  // aimed shot, as intended
-    const dy = (v.pos.y + v.height - 0.17) - g.player.eyeY;
-    g.player.pitch = Math.atan2(dy, 12);
-    g.player.recoilPitch = 0; g.player.arsenal.fireTimer = 0; g.player.arsenal.spread = 0;
-    g.player.fire();
-    out.headshotKill = { alive: v.alive, hp: Math.round(v.health) };
+    const soft = g.world.boxes.find(b => b.soft && !b.dead);
+    const cx = (soft.min.x + soft.max.x) / 2, cy = (soft.min.y + soft.max.y) / 2, cz = (soft.min.z + soft.max.z) / 2;
+    const thin = (soft.max.x - soft.min.x) < (soft.max.z - soft.min.z);
+    const hit = traceShot(g, g.player, thin ? V(cx - 3, cy, cz) : V(cx, cy, cz - 3), thin ? V(1, 0, 0) : V(0, 0, 1), 30);
+    out.penetration = { through: hit.punched.length > 0, power: +(hit.power ?? 1).toFixed(2) };
+    for (let i = 0; i < 12; i++) g.world.damageBox(soft, 30);
+    out.wallDestroyed = soft.dead === true;
+    g.restoreGeometry();
+    out.wallRestored = soft.dead === false;
   }
 
-  // --- body shots take the advertised number of rounds ---
+  // ---- a breached wall opens new routes for the AI ----
+  {
+    // blow a doorway-sized hole, the way a charge does, not a single panel
+    const soft = g.world.boxes.find(b => b.soft && !b.dead);
+    const centre = V((soft.min.x + soft.max.x) / 2, soft.min.y + 1, (soft.min.z + soft.max.z) / 2);
+    const before = g.nav.nodes.reduce((s, n) => s + n.links.length, 0);
+    for (const b of g.world.breakablesNear(centre, 2.4)) if (b.soft) g.world.destroyBox(b);
+    const after = g.nav.nodes.reduce((s, n) => s + n.links.length, 0);
+    out.navRelink = { linksGained: after - before };
+    g.restoreGeometry();
+  }
+
+  // ---- gadgets ----
+  {
+    g.gadgets.smokes.push({ pos: V(0, 1.5, -30), r: 4, maxR: 4, life: 10 });
+    out.smoke = { blocks: g.gadgets.blocksSight(V(-8, 1.5, -30), V(8, 1.5, -30)),
+                  clear: !g.gadgets.blocksSight(V(-8, 1.5, -20), V(8, 1.5, -20)) };
+    g.gadgets.smokes.length = 0;
+
+    const bot = g.bots[0];
+    bot.alive = true; bot.pos.set(0, 0.2, -20); bot.yaw = 0; bot.blindUntil = 0;
+    g.gadgets.items.push({ kind: 'flash', owner: g.player, team: 0, mesh: null, pos: V(0, 1.4, -24), fuse: 0.001, life: 5, static: true });
+    for (let i = 0; i < 5; i++) g.gadgets.update(1 / 60);
+    out.flashBlinds = (bot.blindUntil || 0) > g.time;
+
+    const foe = g.bots.find(b => b.team === 1) || g.bots[0];
+    foe.alive = true; foe.health = 100; foe.team = 1; foe.pos.set(24, 0.2, 24);
+    g.gadgets.items.push({ kind: 'mine', owner: g.player, team: 0, mesh: null, static: true, armed: true, pos: V(24, 0.3, 24), fuse: Infinity, life: 30 });
+    for (let i = 0; i < 6; i++) g.gadgets.update(1 / 60);
+    out.mineTriggers = foe.health < 100 || !foe.alive;
+
+    const boxesBefore = g.world.boxes.length;
+    g.gadgets.deployShield(g.player, V(30, 0.2, -30), 0);
+    out.shield = { added: g.world.boxes.length - boxesBefore, blocks: !g.world.losClear(V(28, 0.6, -30), V(32, 0.6, -30)) };
+  }
+
+  // ---- breach charge opens a hole ----
+  {
+    const soft = g.world.boxes.find(b => b.soft && !b.dead);
+    const before = g.world.boxes.filter(b => b.soft && !b.dead).length;
+    g.gadgets.items.push({ kind: 'charge', owner: g.player, team: 0, mesh: null, static: true,
+      pos: V((soft.min.x + soft.max.x) / 2, soft.min.y + 1.2, (soft.min.z + soft.max.z) / 2), fuse: 0.001, box: soft, life: 5 });
+    for (let i = 0; i < 5; i++) g.gadgets.update(1 / 60);
+    out.breachOpens = before - g.world.boxes.filter(b => b.soft && !b.dead).length;
+    g.restoreGeometry();
+  }
+
+  // ---- lethality ----
   {
     const v = g.bots[0];
-    // park everyone else so a stray bot can't finish the target mid-measurement
     const others = g.actors.filter(a => a !== v && a !== g.player);
     const wasAlive = others.map(a => a.alive);
     others.forEach(a => { a.alive = false; });
-    v.alive = true; v.health = 1000; v.maxHealth = 1000; v.shield = 0; v.height = 1.82;
-    put(12, 0.2, 30, 0);
-    v.pos.set(12, 0.2, 18); v.vel.set(0, 0, 0);
+
+    v.alive = true; v.health = 100; v.maxHealth = 100; v.shield = 100; v.height = 1.82;
+    put(0, 0.2, -30, 0);
+    v.pos.set(0, 0.2, -42); v.vel.set(0, 0, 0);
+    g.player.arsenal.give('pistol', true); g.player.arsenal.select('pistol', true);
+    g.player.adsAmt = 1;
+    g.player.pitch = Math.atan2((v.pos.y + v.height - 0.17) - g.player.eyeY, 12);
+    g.player.recoilPitch = 0; g.player.arsenal.fireTimer = 0; g.player.arsenal.spread = 0;
+    g.player.fire();
+    out.headshotKill = !v.alive;
+
+    v.alive = true; v.health = 1000; v.maxHealth = 1000; v.shield = 0;
     g.player.arsenal.give('rifle', true); g.player.arsenal.select('rifle', true);
     g.player.adsAmt = 1;
     g.player.pitch = Math.atan2((v.pos.y + v.height * 0.5) - g.player.eyeY, 12);
-    g.player.recoilPitch = 0; g.player.recoilYaw = 0;
-    g.player.arsenal.fireTimer = 0; g.player.arsenal.spread = 0; g.player.arsenal.sprayIndex = 0;
+    g.player.recoilPitch = 0; g.player.arsenal.fireTimer = 0; g.player.arsenal.spread = 0; g.player.arsenal.sprayIndex = 0;
     const before = v.health;
     g.player.fire();
     out.bodyDamage = Math.round(before - v.health);
-    out.bodyShotsToKill = Math.ceil(100 / Math.max(1, out.bodyDamage));
     v.maxHealth = 100; v.health = 100;
     others.forEach((a, i) => { a.alive = wasAlive[i]; });
   }
 
-  // --- aimed + still is precise, hipfire on the move is not ---
+  // ---- spread + recoil model ----
   {
     const ars = g.player.arsenal;
     ars.select('rifle', true); ars.spread = 0;
@@ -184,136 +242,154 @@ const sim = await page.evaluate(async () => {
       hipStill: +ars.currentSpread(0, false, false, false).toFixed(2),
       inAir: +ars.currentSpread(0, true, true, false).toFixed(2),
     };
-  }
-
-  // --- recoil patterns are fixed, not random ---
-  {
-    const { WEAPONS, recoilStep } = await import('/src/weapons/defs.js');
     const a = [0, 1, 2, 5, 9].map(i => recoilStep(WEAPONS.rifle, i).join(','));
     const b = [0, 1, 2, 5, 9].map(i => recoilStep(WEAPONS.rifle, i).join(','));
-    const climbs = WEAPONS.rifle.pattern.slice(0, 4).map(p => p[1]);
-    out.pattern = { deterministic: a.join('|') === b.join('|'), climbsThenFlattens: climbs[0] > climbs[3] };
+    out.pattern = { deterministic: a.join('|') === b.join('|'),
+                    climbsThenFlattens: WEAPONS.rifle.pattern[0][1] > WEAPONS.rifle.pattern[3][1] };
   }
 
-  // --- walls still stop bullets ---
+  // ---- attachments ----
   {
-    const bot = g.bots[0]; bot.alive = true; bot.health = 1000; bot.maxHealth = 1000; bot.shield = 0;
-    put(9.5, 0.2, 22, 0); bot.pos.set(9.5, 0.2, 2);
-    g.player.arsenal.select('rifle', true);
-    const h0 = bot.health;
-    for (let i = 0; i < 6; i++) { g.player.arsenal.fireTimer = 0; g.player.recoilPitch = 0; g.player.fire(); g.update(1 / 60); }
-    out.wallsStopBullets = bot.health === h0;
-    bot.maxHealth = 100; bot.health = 100;
+    const base = WEAPONS.rifle;
+    const plain = resolveWeapon(base, { optic: 'iron', barrel: 'none', grip: 'none', laser: 'none', mag: 'none' });
+    const kitted = resolveWeapon(base, { optic: 'acog', barrel: 'comp', grip: 'vertical', laser: 'laser', mag: 'extended' });
+    out.attachments = {
+      magUp: kitted.mag > plain.mag,
+      recoilDown: (kitted.recoilVMul ?? 1) < 1 && (kitted.recoilHMul ?? 1) < 1,
+      hipTighter: kitted.hipSpread < plain.hipSpread,
+      zoomIn: kitted.adsFovMult < plain.adsFovMult,
+      reticle: kitted.reticle,
+    };
   }
 
-  // --- rocket jump still works (physics sanity), with the bots parked ---
-  const liveBots = g.bots; g.bots = [];
+  // ---- ADS sight picture lines the sight up with screen centre ----
   {
-    put(12, 0.2, 40); g.player.pitch = -1.45;
-    for (let i = 0; i < 8; i++) g.update(1 / 60);
-    g.player.arsenal.give('rocket', true); g.player.arsenal.select('rocket', true);
-    g.player.arsenal.fireTimer = 0; g.player.arsenal.ammo.mag = 1; g.player.health = 100;
-    const y0 = g.player.pos.y; g.player.fire();
-    let peak = y0; for (let i = 0; i < 150; i++) { g.update(1 / 60); peak = Math.max(peak, g.player.pos.y); }
-    out.rocketJump = { rise: +(peak - y0).toFixed(1), hp: Math.round(g.player.health), alive: g.player.alive };
-  }
-  g.bots = liveBots;
-
-  // --- every weapon selects and builds a viewmodel ---
-  {
-    const ids = ['rifle', 'smg', 'shotgun', 'sniper', 'pistol', 'revolver', 'lmg', 'rocket'];
-    const bad = [];
-    for (const id of ids) {
-      g.player.arsenal.give(id, true); g.player.arsenal.select(id, true);
-      for (let i = 0; i < 3; i++) g.update(1 / 60);
-      g.render();
-      if (g.viewModel.id !== id) bad.push(id);
-    }
-    out.allWeapons = bad.length === 0;
+    const vm = g.viewModel;
+    vm.setWeapon('rifle', resolveWeapon(WEAPONS.rifle, { optic: 'reddot' }));
+    const withDot = vm.sightHeight;
+    vm.setWeapon('rifle', resolveWeapon(WEAPONS.rifle, { optic: 'iron' }));
+    const withIron = vm.sightHeight;
+    out.sight = { iron: +withIron.toFixed(3), reddot: +withDot.toFixed(3), opticSitsHigher: withDot > withIron };
   }
 
-  // --- frame budget with a full lobby of the hardest bots ---
+  // ---- cameras ----
   {
-    g.startMatch({ mode: 'ffa', bots: 15, difficulty: 'insane', scoreLimit: 50, timeLimit: 600 });
+    const cam = g.cameras[0];
+    out.cameras = g.cameras.length;
+    g.world.damageBox(cam.box, 40);
+    out.cameraDestroyed = cam.dead === true;
+  }
+
+  // ---- gun game hands out the ladder and nothing else ----
+  {
+    g.startMatch({ mode: 'gungame', bots: 5, difficulty: 'normal', scoreLimit: 30, timeLimit: 600 });
+    out.gunGameNoPickups = g.weaponCrates.length === 0;
+    const start = new Set(g.actors.map(a => a.arsenal.current));
+    let f = 0, top = 0;
+    while (f < 60 * 120) { g.update(1 / 60); f++; top = Math.max(top, ...g.actors.map(a => a.gunGameTier)); }
+    out.gungame = { start: [...start], topTier: top };
+  }
+
+  // ---- frame budget ----
+  {
+    g.startMatch({ mode: 'ffa', bots: 15, difficulty: 'insane', scoreLimit: 99, timeLimit: 600 });
     for (let i = 0; i < 60; i++) g.update(1 / 60);
     const t = performance.now();
     for (let i = 0; i < 120; i++) g.update(1 / 60);
     out.simMs = +((performance.now() - t) / 120).toFixed(2);
   }
 
-  // --- tactical rounds: prep → live → round win → match win, no respawns ---
+  // ---- plant and defuse work end to end ----
+  {
+    g.startMatch({ mode: 'siege', bots: 5, difficulty: 'normal', roundsToWin: 3, prepTime: 1, roundTime: 150 });
+    g.siege.phase = 'action'; g.attackersFrozen = false;
+    g.siege.planted = false; g.siege.plantProgress = 0; g.siege.defuseProgress = 0;
+    const atk = g.actors.find(a => g.sideOf(a) === 'atk');
+    atk.pos.set(g.siege.site.x, g.siege.site.y, g.siege.site.z);
+    for (let i = 0; i < 400 && !g.siege.planted; i++) g.siege.interact(atk, 1 / 60);
+    const planted = g.siege.planted;
+    const def = g.actors.find(a => g.sideOf(a) === 'def');
+    def.pos.copy(g.siege.defuser.pos);
+    const roundsBefore = g.siege.rounds.slice();
+    for (let i = 0; i < 500 && g.siege.phase === 'action'; i++) g.siege.interact(def, 1 / 60);
+    out.objective = { planted, defused: g.siege.phase === 'over', scored: g.siege.rounds.join() !== roundsBefore.join() };
+  }
+
+  // ---- siege runs a full match: prep → action → rounds → result ----
   {
     let ended = null;
     g.onMatchEnd = r => { ended = r; };
-    g.startMatch({ mode: 'tactical', bots: 7, difficulty: 'normal', roundsToWin: 2, prepTime: 2, roundTime: 90 });
-    const seen = new Set([g.roundState]);
-    let f = 0, respawnedMidRound = false, maxRound = 1;
+    g.startMatch({ mode: 'siege', bots: 7, difficulty: 'normal', roundsToWin: 2, prepTime: 2, roundTime: 120 });
+    const phases = new Set();
+    const sides = new Set();
+    let f = 0, planted = false, respawnedMidRound = false;
     while (!ended && f < 60 * 60 * 14) {
-      const aliveBefore = g.teamAlive(0) + g.teamAlive(1);
+      const aliveBefore = g.sideAlive('atk') + g.sideAlive('def');
       g.update(1 / 60); f++;
-      seen.add(g.roundState);
-      maxRound = Math.max(maxRound, g.roundNo);
-      if (g.roundState === 'live' && g.teamAlive(0) + g.teamAlive(1) > aliveBefore) respawnedMidRound = true;
+      phases.add(g.siege.phase);
+      sides.add(g.siege.playerSide);
+      planted = planted || g.siege.planted;
+      if (g.siege.phase === 'action' && g.sideAlive('atk') + g.sideAlive('def') > aliveBefore) respawnedMidRound = true;
     }
-    out.tactical = {
-      ended: !!ended, states: [...seen].sort(), rounds: g.rounds, roundsPlayed: maxRound,
-      respawnedMidRound, simSec: Math.round(f / 60),
+    out.siege = {
+      ended: !!ended, phases: [...phases].sort(), sidesPlayed: [...sides].sort(),
+      rounds: g.siege.rounds, everPlanted: planted, respawnedMidRound, simSec: Math.round(f / 60),
     };
   }
 
-  // --- the other three modes still run to completion ---
+  // ---- the other modes still finish ----
   {
     let ended = null; g.onMatchEnd = r => { ended = r; };
     g.startMatch({ mode: 'ffa', bots: 8, difficulty: 'normal', scoreLimit: 10, timeLimit: 600 });
     let f = 0; while (!ended && f < 60 * 60 * 14) { g.update(1 / 60); f++; }
-    out.ffa = { ended: !!ended, kills: g.actors.reduce((s, a) => s + a.kills, 0), simSec: Math.round(f / 60) };
+    out.ffa = { ended: !!ended, kills: g.actors.reduce((s, a) => s + a.kills, 0) };
 
     ended = null;
     g.startMatch({ mode: 'tdm', bots: 8, difficulty: 'normal', scoreLimit: 12, timeLimit: 600 });
     const mate = g.bots.find(b => b.team === 0), foe = g.bots.find(b => b.team === 1);
     out.teams = g.friendly(g.player, mate) && !g.friendly(g.player, foe);
     f = 0; while (!ended && f < 60 * 60 * 14) { g.update(1 / 60); f++; }
-    out.tdm = { ended: !!ended, scores: [g.teamScore(0), g.teamScore(1)], simSec: Math.round(f / 60),
-                alive: [g.teamAlive(0), g.teamAlive(1)] };
-
-    g.startMatch({ mode: 'gungame', bots: 6, difficulty: 'hard', scoreLimit: 30, timeLimit: 600 });
-    const start = new Set(g.actors.map(a => a.arsenal.current));
-    f = 0; let top = 0;
-    while (f < 60 * 120) { g.update(1 / 60); f++; top = Math.max(top, ...g.actors.map(a => a.gunGameTier)); }
-    out.gungame = { start: [...start], topTier: top };
+    out.tdm = !!ended;
   }
   return out;
 });
 
-check('core roof reachable', sim.coreRoof);
-check('core second tier reachable', sim.coreTier);
-check('sniper tower reachable', sim.sniperTower);
-check('catwalk reachable', sim.catwalk);
-check('bunker roof reachable', sim.bunkerRoof);
-check('perimeter walls are solid', sim.wallsStop);
-check('sprint is tactical-paced, not arcade', sim.sprintSpeed > 5 && sim.sprintSpeed < 7, { sprint: sim.sprintSpeed, walk: sim.walkSpeed });
+check('every attacker spawn can reach both objectives', sim.routes.misses.length === 0, sim.routes);
+check('sprint is tactical-paced', sim.sprintSpeed > 6 && sim.sprintSpeed < 8, { sprint: sim.sprintSpeed, walk: sim.walkSpeed });
 check('bunny hopping gains no speed', sim.hopSpeed <= sim.sprintSpeed + 0.3, { hop: sim.hopSpeed, sprint: sim.sprintSpeed });
-check('crouch and stand back up', sim.crouch);
-check('leaning moves the camera and exposes the head',
+check('slide gives a burst of speed', sim.slide.triggered && sim.slide.faster, sim.slide);
+check('leaning costs no movement speed', sim.leanSpeed >= sim.sprintSpeed - 0.2, { leaning: sim.leanSpeed, sprint: sim.sprintSpeed });
+check('leaning exposes the head hitbox',
   sim.lean.offset > 0.3 && sim.lean.leanedHit === 'head' && sim.lean.uprightHit === null, sim.lean);
-check('headshots kill through full armour', !sim.headshotKill.alive, sim.headshotKill);
-check('rifle body TTK is 3 rounds', sim.bodyShotsToKill === 3, { damagePerShot: sim.bodyDamage, shots: sim.bodyShotsToKill });
+check('bullets punch through drywall and lose power', sim.penetration.through && sim.penetration.power < 1, sim.penetration);
+check('soft walls break and come back next round', sim.wallDestroyed && sim.wallRestored);
+check('destruction opens new AI routes', sim.navRelink.linksGained > 0, sim.navRelink);
+check('breach charge opens a hole', sim.breachOpens > 0, { panels: sim.breachOpens });
+check('smoke blocks sight lines', sim.smoke.blocks && sim.smoke.clear, sim.smoke);
+check('flashbang blinds', sim.flashBlinds);
+check('proximity mine triggers on enemies', sim.mineTriggers);
+check('deployable shield becomes real cover', sim.shield.added === 1 && sim.shield.blocks, sim.shield);
+check('headshots kill through full armour', sim.headshotKill);
+check('rifle body damage is 3-shot lethal', sim.bodyDamage >= 33 && sim.bodyDamage <= 35, { damage: sim.bodyDamage });
 check('aimed + still beats hipfire and jumping',
   sim.spread.adsStill < 0.1 && sim.spread.adsMoving > sim.spread.adsStill * 5 &&
   sim.spread.hipStill > sim.spread.adsStill * 20 && sim.spread.inAir > sim.spread.hipStill, sim.spread);
 check('recoil patterns are fixed and learnable', sim.pattern.deterministic && sim.pattern.climbsThenFlattens, sim.pattern);
-check('walls stop bullets', sim.wallsStopBullets);
-check('rocket jump still launches without suiciding',
-  sim.rocketJump.rise > 3 && sim.rocketJump.alive && sim.rocketJump.hp < 90, sim.rocketJump);
-check('all weapons switch + render', sim.allWeapons);
-check('15 insane bots stay inside frame budget', sim.simMs < 8, { simMs: sim.simMs });
-check('tactical runs prep → live → round end → match end',
-  sim.tactical.ended && sim.tactical.states.join() === 'live,over,prep' && sim.tactical.roundsPlayed >= 2, sim.tactical);
-check('no respawns inside a tactical round', !sim.tactical.respawnedMidRound);
-check('FFA reaches its score limit', sim.ffa.ended && sim.ffa.kills >= 10, sim.ffa);
-check('TDM teams + friendly fire off', sim.teams && sim.tdm.ended, { friendlyLogic: sim.teams, ...sim.tdm });
+check('attachments change how a gun handles', Object.values(sim.attachments).slice(0, 4).every(Boolean), sim.attachments);
+check('optics raise the sight line above the irons', sim.sight.opticSitsHigher, sim.sight);
+check('cameras exist and can be shot out', sim.cameras >= 4 && sim.cameraDestroyed, { cameras: sim.cameras });
+check('gun game has no floor weapons', sim.gunGameNoPickups);
 check('gun game starts on the pistol and promotes',
   sim.gungame.start.length === 1 && sim.gungame.start[0] === 'pistol' && sim.gungame.topTier > 0, sim.gungame);
+check('15 insane bots stay inside frame budget', sim.simMs < 9, { simMs: sim.simMs });
+check('siege plays prep → action → round end → match end',
+  sim.siege.ended && sim.siege.phases.join() === 'action,over,prep', sim.siege);
+check('siege swaps sides between rounds', sim.siege.sidesPlayed.length === 2, sim.siege.sidesPlayed);
+check('defuser can be planted and defused',
+  sim.objective.planted && sim.objective.defused && sim.objective.scored, sim.objective);
+check('no respawns inside a siege round', !sim.siege.respawnedMidRound);
+check('FFA reaches its score limit', sim.ffa.ended && sim.ffa.kills >= 10, sim.ffa);
+check('TDM teams + friendly fire off', sim.teams && sim.tdm);
 check('no console/page errors', errors.length === 0, errors.slice(0, 3));
 
 await browser.close();

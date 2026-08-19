@@ -7,12 +7,13 @@ import { moveBody } from '../world/collision.js';
 import { clamp, damp } from '../core/util.js';
 
 export const MOVE = {
-  walk: 3.7, sprint: 6.0, crouch: 1.95, ads: 2.35, slow: 1.7,
-  groundAccel: 11, airAccel: 1.8,
-  friction: 11, gravity: 22, jumpVel: 6.2,
+  walk: 4.1, sprint: 6.8, crouch: 2.15, ads: 2.7, slow: 1.85,
+  groundAccel: 12, airAccel: 1.8,
+  friction: 11, gravity: 22, jumpVel: 6.3,
   radius: 0.42, height: 1.82, crouchHeight: 1.15, stepHeight: 0.56,
-  leanDist: 0.44, leanRoll: 0.21, leanSpeedMult: 0.55,
-  landRecover: 0.3,
+  leanDist: 0.46, leanRoll: 0.22,
+  landRecover: 0.26,
+  slideSpeed: 9.2, slideTime: 0.55, slideFriction: 2.6, slideCooldown: 1.1,
 };
 
 const _probe = new THREE.Vector3();
@@ -41,8 +42,23 @@ export function stepMovement(actor, cmd, dt, world, game) {
   if (wl > 0.0001) { wx /= wl; wz /= wl; } else { wx = wz = 0; }
   const wishing = wl > 0.001;
 
+  // ---- slide: commit forward out of a sprint, low profile, hard to track ----
+  actor.slideCd = Math.max(0, (actor.slideCd ?? 0) - dt);
+  if (cmd.crouch && cmd.sprint && actor.grounded && !actor.sliding &&
+      actor.slideCd <= 0 && actor.speed > MOVE.sprint * 0.8) {
+    actor.sliding = true; actor.slideT = MOVE.slideTime; actor.slideCd = MOVE.slideCooldown;
+    const sp = Math.max(actor.speed, MOVE.sprint);
+    const inv = MOVE.slideSpeed / sp;
+    v.x *= inv; v.z *= inv;
+    game?.onSlide?.(actor);
+  }
+  if (actor.sliding) {
+    actor.slideT -= dt;
+    if (actor.slideT <= 0 || !actor.grounded || !cmd.crouch) actor.sliding = false;
+  }
+
   // ---- stance ----
-  const wantCrouch = cmd.crouch;
+  const wantCrouch = cmd.crouch || actor.sliding;
   const targetH = wantCrouch ? MOVE.crouchHeight : MOVE.height;
   if (!wantCrouch && actor.height < MOVE.height) {
     const free = !world.overlaps(p.x - MOVE.radius, p.y, p.z - MOVE.radius,
@@ -59,31 +75,32 @@ export function stepMovement(actor, cmd, dt, world, game) {
   // ---- target speed ----
   actor.landT = Math.max(0, (actor.landT ?? 0) - dt);
   let wishSpeed = MOVE.walk;
-  if (cmd.slow) wishSpeed = MOVE.slow;
+  if (actor.sliding) wishSpeed = 1.2;                 // no steering power mid-slide
+  else if (cmd.slow) wishSpeed = MOVE.slow;
   else if (actor.crouching) wishSpeed = MOVE.crouch;
   else if (cmd.sprint && cmd.forward > 0.1) wishSpeed = MOVE.sprint;
   else if (actor.adsing) wishSpeed = MOVE.ads;
-  if (actor.leanAmt) wishSpeed *= 1 - Math.abs(actor.leanAmt) * (1 - MOVE.leanSpeedMult);
-  if (actor.landT > 0) wishSpeed *= 0.62;             // brief recovery after landing
+  if (actor.landT > 0) wishSpeed *= 0.68;             // brief recovery after landing
   wishSpeed *= actor.speedMult ?? 1;
-  actor.sprinting = cmd.sprint && cmd.forward > 0.1 && !actor.crouching && !actor.adsing && actor.grounded;
+  actor.sprinting = cmd.sprint && cmd.forward > 0.1 && !actor.crouching && !actor.adsing && actor.grounded && !actor.sliding;
 
   // ---- ground / air ----
   if (actor.grounded) {
     const sp = Math.hypot(v.x, v.z);
     if (sp > 0.01) {
-      const drop = Math.max(sp, 3) * MOVE.friction * dt;
+      const fric = actor.sliding ? MOVE.slideFriction : MOVE.friction;
+      const drop = Math.max(sp, 3) * fric * dt;
       const ns = Math.max(0, sp - drop) / sp;
       v.x *= ns; v.z *= ns;
     }
-    if (wishing) accelerate(v, wx, wz, wishSpeed, MOVE.groundAccel, dt);
+    if (wishing && !actor.sliding) accelerate(v, wx, wz, wishSpeed, MOVE.groundAccel, dt);
   } else if (wishing) {
     // almost no air control: you commit to a jump
     accelerate(v, wx, wz, wishSpeed * 0.85, MOVE.airAccel, dt);
   }
 
   // ---- jump ----
-  if (cmd.jump && actor.grounded && actor.jumpCd <= 0 && !actor.crouching) {
+  if (cmd.jump && actor.grounded && actor.jumpCd <= 0 && !actor.crouching && !actor.sliding) {
     v.y = MOVE.jumpVel;
     actor.grounded = false; actor.jumpCd = 0.32;
     game?.onJump?.(actor);

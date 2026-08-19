@@ -6,6 +6,7 @@ import { audio } from '../core/audio.js';
 
 const _dir = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3();
 const _o = new THREE.Vector3(), _p = new THREE.Vector3(), _tmp = new THREE.Vector3();
+const _pen = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 /** enough damage that no amount of health survives it — used for lethal headshots */
 const LETHAL = 100000;
@@ -82,17 +83,22 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
         origin.x, origin.y, origin.z, _dir.x, _dir.y, _dir.z, origin.distanceTo(end));
       if (d < 2.2) audio.whizby(_tmp.set(pl.pos.x, pl.pos.y + 1.4, pl.pos.z));
     }
+    for (const p of hit.punched) {
+      game.fx.impact(p.point, p.normal, 'wall');
+      game.world.damageBox(p.box, w.dmg * 0.5);
+    }
     if (hit.actor) {
       const dist = hit.t;
-      let dmg = falloffDamage(w, dist);
+      let dmg = falloffDamage(w, dist) * (hit.power ?? 1);
       if (hit.part === 'head') {
         anyHead = true;
-        dmg = w.headshotKill ? LETHAL : dmg * w.headMult;
+        dmg = w.headshotKill && (hit.power ?? 1) > 0.5 ? LETHAL : dmg * w.headMult;
       } else if (hit.part === 'legs') dmg *= w.limbMult;
       const r = resolveHit(game, shooter, hit.actor, dmg, hit, w);
       anyHit = true; anyKill = anyKill || r.killed;
     } else if (hit.world) {
       game.fx.impact(hit.point, hit.normal, 'wall');
+      if (hit.box?.breakable) game.world.damageBox(hit.box, w.dmg * (hit.box.soft ? 0.8 : 0.45));
     }
   }
   if (anyHit) {
@@ -105,19 +111,55 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
   audio.gunshot(muzzle, w.sound);
 }
 
-/** raycast the world + all actors; nearest wins */
-export function traceShot(game, shooter, origin, dir, maxDist) {
-  const wallHit = game.world.raycast(origin, dir, maxDist);
-  let bestT = wallHit ? wallHit.dist : maxDist;
-  let actor = null, part = null;
-  for (const a of game.actors) {
-    if (a === shooter || !a.alive) continue;
-    if (game.friendly(shooter, a)) continue;      // teammates don't block or take fire
-    const h = a.hitTest(origin, dir, bestT);
-    if (h && h.t < bestT) { bestT = h.t; actor = a; part = h.part; }
+/**
+ * Raycast the world + all actors, nearest wins. Soft interior walls do not stop
+ * a round: the bullet chews through, loses power and keeps going, which is what
+ * makes pre-firing and wall-banging work.
+ */
+export function traceShot(game, shooter, origin, dir, maxDist, maxPenetrations = 2) {
+  const from = _pen.copy(origin);
+  let travelled = 0, power = 1;
+  const punched = [];
+
+  for (let pass = 0; pass <= maxPenetrations; pass++) {
+    const remaining = maxDist - travelled;
+    if (remaining <= 0) break;
+    const wallHit = game.world.raycast(from, dir, remaining);
+    let bestT = wallHit ? wallHit.dist : remaining;
+    let actor = null, part = null;
+    for (const a of game.actors) {
+      if (a === shooter || !a.alive) continue;
+      if (game.friendly(shooter, a)) continue;    // teammates don't block or take fire
+      const h = a.hitTest(from, dir, bestT);
+      if (h && h.t < bestT) { bestT = h.t; actor = a; part = h.part; }
+    }
+    const point = new THREE.Vector3().copy(dir).multiplyScalar(bestT).add(from);
+    if (actor) return { t: travelled + bestT, point, normal: dir.clone().negate(), actor, part, world: false, power, punched };
+
+    if (!wallHit) return { t: travelled + bestT, point, normal: dir.clone().negate(), actor: null, part: null, world: false, power, punched };
+
+    const box = wallHit.box;
+    const canPunch = box.soft && !box.dead && pass < maxPenetrations;
+    if (!canPunch) {
+      return { t: travelled + bestT, point, normal: wallHit.normal.clone(), actor: null, part: null, world: true, box, power, punched };
+    }
+    // through the drywall: mark an entry hole, weaken the round, carry on
+    punched.push({ point: point.clone(), normal: wallHit.normal.clone(), box });
+    const thickness = boxThickness(box, dir);
+    const step = bestT + thickness + 0.04;
+    from.addScaledVector(dir, step);
+    travelled += step;
+    power *= 0.55;
   }
-  const point = new THREE.Vector3().copy(dir).multiplyScalar(bestT).add(origin);
-  return { t: bestT, point, normal: wallHit && !actor ? wallHit.normal.clone() : dir.clone().negate(), actor, part, world: !actor && !!wallHit };
+  const point = new THREE.Vector3().copy(dir).multiplyScalar(0.1).add(from);
+  return { t: travelled, point, normal: dir.clone().negate(), actor: null, part: null, world: false, power, punched };
+}
+
+function boxThickness(box, dir) {
+  const ax = Math.abs(dir.x), ay = Math.abs(dir.y), az = Math.abs(dir.z);
+  if (ax >= ay && ax >= az) return (box.max.x - box.min.x) / Math.max(ax, 0.2);
+  if (ay >= az) return (box.max.y - box.min.y) / Math.max(ay, 0.2);
+  return (box.max.z - box.min.z) / Math.max(az, 0.2);
 }
 
 function resolveHit(game, shooter, victim, dmg, hit, w) {
@@ -205,6 +247,11 @@ export function explode(game, proj, at, directVictim) {
     directVictim.onDamaged?.(res.dealt, proj.owner, { point: at, part: 'body' }, w);
     if (proj.owner === game.player) game.hud.floatDamage(at, Math.round(res.dealt), false);
     if (res.killed) game.onKill(proj.owner, directVictim, w.id, false);
+  }
+
+  // blast damage to destructible geometry — this is how you open a wall or a hatch
+  for (const box of game.world.breakablesNear(at, pr.splash * 0.9)) {
+    game.world.damageBox(box, pr.splashDmg * (box.hatch ? 1.4 : 1.1));
   }
 
   for (const a of game.actors) {

@@ -4,6 +4,9 @@ import { settings } from '../core/settings.js';
 import { clamp, fmtTime } from '../core/util.js';
 import { getWeapon, WEAPON_IDS } from '../weapons/defs.js';
 import { binds, codeLabel } from '../core/keybinds.js';
+import { GADGET_INFO } from '../game/operators.js';
+
+const getGadgetName = id => GADGET_INFO[id]?.name || id;
 
 const $ = id => document.getElementById(id);
 const _v = new THREE.Vector3();
@@ -25,7 +28,10 @@ export class HUD {
       streak: $('streak-chip'), streakN: $('streak-n'),
       fps: $('fps'), usePrompt: $('use-prompt'), alive: $('alive-count'),
       prep: $('prep'), prepNum: $('prep-num'), spectating: $('spectating'), specName: $('spec-name'),
-      stance: $('stance'),
+      stance: $('stance'), flashOverlay: $('flash-overlay'), interact: $('interact'),
+      interactLabel: $('interact-label'), interactFill: $('interact-fill'),
+      objective: $('objective'), gadgets: $('gadget-list'), reticle: $('optic-reticle'),
+      camView: $('cam-view'), camName: $('cam-name'),
     };
     this.vigT = 0; this.hitmarkT = 0;
     this.keyHint = id => codeLabel((binds[id] || [])[0]);
@@ -81,6 +87,8 @@ export class HUD {
     this.el.shNum.textContent = Math.ceil(player.shield);
 
     const ars = player.arsenal, w = ars.def;
+    // attachments decide the sight picture, so ask for the resolved weapon
+    const rw = player.weapon || w;
     const a = ars.ammo;
     this.el.mag.textContent = w.melee ? '∞' : a.mag;
     this.el.res.textContent = w.melee ? '' : a.reserve;
@@ -94,12 +102,19 @@ export class HUD {
     } else this.el.reloadBar.classList.remove('on');
 
     // crosshair opens with the real spread cone
-    const spread = ars.currentSpread(player.speed / 3.7, !player.grounded, player.adsAmt > 0.8, player.crouching);
+    const spread = ars.currentSpread(player.speed / 4.1, !player.grounded, player.adsAmt > 0.8, player.crouching, rw);
     const gap = clamp(3 + spread * 7, 3, 60);
     this.el.crosshair.style.setProperty('--gap', gap + 'px');
-    const scoped = w.scope && player.adsAmt > 0.72;
-    this.el.scope.classList.toggle('hidden', !scoped);
-    this.el.crosshair.style.opacity = scoped ? 0 : (player.alive ? 1 : 0);
+    const magnified = (rw.scope || rw.magnified) && player.adsAmt > 0.55;
+    this.el.scope.classList.toggle('hidden', !magnified);
+    const opticAiming = player.adsAmt > 0.55 && !magnified && rw.reticle && rw.reticle !== 'iron';
+    if (this.el.reticle) {
+      this.el.reticle.classList.toggle('hidden', !opticAiming);
+      if (opticAiming) this.el.reticle.dataset.kind = rw.reticle;
+    }
+    this.el.crosshair.style.opacity = (magnified || opticAiming || player.adsAmt > 0.55) ? 0 : (player.alive ? 1 : 0);
+
+    this.updateFlash(dt);
 
     // vignette decay
     if (this.vigT > 0) {
@@ -112,6 +127,12 @@ export class HUD {
 
     this.updateWheel(ars);
     this.setStance(player);
+    if (player.operator) {
+      this.setGadgets([
+        { key: this.keyHint('ability'), name: player.operator.ability.name, count: player.abilityCharges ?? 0, ready: (player.abilityCharges ?? 0) > 0 },
+        { key: this.keyHint('gadget'), name: getGadgetName(player.operator.gadget.id), count: player.gadgetCount ?? 0, ready: (player.gadgetCount ?? 0) > 0 },
+      ]);
+    } else this.setGadgets([]);
 
     if (player.streak >= 2 && player.alive) {
       this.el.streak.classList.remove('hidden');
@@ -186,6 +207,63 @@ export class HUD {
   }
 
   damageFlash(amount) { this.vigT = 0.55; this.vigAmt = amount; }
+
+  /** flashbang: full-screen white that fades out */
+  flash(strength) {
+    const el = this.el.flashOverlay;
+    if (!el) return;
+    this.flashT = 1.0 + strength * 2.4;
+    this.flashMax = this.flashT;
+    el.style.opacity = String(clamp(0.35 + strength * 0.65, 0, 1));
+  }
+
+  updateFlash(dt) {
+    const el = this.el.flashOverlay;
+    if (!el || !this.flashT) return;
+    this.flashT = Math.max(0, this.flashT - dt);
+    el.style.opacity = String(clamp(this.flashT / this.flashMax, 0, 1) ** 0.6);
+    if (this.flashT <= 0) el.style.opacity = '0';
+  }
+
+  /** objective progress ring (plant / defuse) */
+  setInteract(label, frac) {
+    const el = this.el.interact;
+    if (!el) return;
+    if (!label) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    this.el.interactLabel.textContent = label;
+    this.el.interactFill.style.width = Math.round(clamp(frac, 0, 1) * 100) + '%';
+  }
+
+  setObjective(text, cls) {
+    const el = this.el.objective;
+    if (!el) return;
+    el.classList.toggle('hidden', !text);
+    if (text) { el.innerHTML = text; el.className = cls || ''; }
+  }
+
+  setCamera(name) {
+    const el = this.el.camView;
+    if (!el) return;
+    el.classList.toggle('hidden', !name);
+    if (name) this.el.camName.textContent = name;
+  }
+
+  setOperator(op) {
+    const el = document.getElementById('op-badge');
+    if (!el || !op) return;
+    el.innerHTML = `<b style="color:#${op.colour.toString(16).padStart(6, '0')}">${op.name}</b>
+      <span>${op.role} · ${op.armour === 3 ? 'HEAVY' : op.armour === 1 ? 'LIGHT' : 'MEDIUM'}</span>`;
+  }
+
+  setGadgets(list) {
+    const el = this.el.gadgets;
+    if (!el) return;
+    el.innerHTML = list.map(g => `
+      <div class="gslot ${g.ready ? '' : 'out'}">
+        <b>${g.key}</b><span>${g.name}</span><i>${g.count}</i>
+      </div>`).join('');
+  }
 
   damageDirection(angleRad) {
     const d = document.createElement('div');

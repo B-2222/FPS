@@ -1,7 +1,7 @@
 // ============ persisted user settings ============
 // v2: sensitivity units changed with the tactical rework, so old saves would
 // feel wildly wrong — start everyone on the retuned defaults.
-const KEY = 'overclock.settings.v2';
+const KEY = 'overclock.settings.v3';
 
 export const settings = {
   // ---- aim ----
@@ -20,10 +20,16 @@ export const settings = {
   shake: true, bob: true, blood: true, tracers: true,
 
   // ---- input behaviour ----
-  toggleAds: false, toggleCrouch: false, toggleSprint: false, autoReload: true,
+  toggleAds: false, toggleCrouch: false, toggleSprint: false, toggleLean: true, autoReload: true,
 
   // ---- match config ----
-  mode: 'tactical', bots: 7, difficulty: 'normal', scoreLimit: 30, roundsToWin: 4, loadout: 'rifle',
+  mode: 'siege', bots: 7, difficulty: 'normal', scoreLimit: 30, roundsToWin: 4, loadout: 'rifle',
+
+  // ---- progression ----
+  credits: 1200,
+  operatorAtk: 'breach', operatorDef: 'anchor',
+  owned: {},            // "slot:id" -> true
+  gunLoadouts: {},      // weaponId -> { optic, barrel, grip, laser, mag }
 };
 
 /** cm of mousepad per 360° turn — the number competitive players actually tune */

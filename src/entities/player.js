@@ -8,6 +8,7 @@ import { audio } from '../core/audio.js';
 import { clamp, damp, lerp, rand } from '../core/util.js';
 import { fireWeapon } from '../game/combat.js';
 import { getWeapon, WEAPON_IDS, recoilStep } from '../weapons/defs.js';
+import { GADGET_INFO } from '../game/operators.js';
 
 const DEG = Math.PI / 180;
 const _dir = new THREE.Vector3(), _mz = new THREE.Vector3(), _vml = new THREE.Vector3();
@@ -26,6 +27,9 @@ export class Player extends Actor {
     this.landKick = 0;
     this.walking = false;
     this.lastFireAt = -9;
+    this.leanState = 0;         // -1 / 0 / +1 when leaning is a toggle
+    this.abilityCharges = 0; this.gadgetCount = 0; this.abilityCd = 0;
+    this.interacting = false;
   }
 
   spawn(pos) {
@@ -33,15 +37,20 @@ export class Player extends Actor {
     this.recoilPitch = this.recoilYaw = 0;
     this.shake = 0; this.roll = 0; this.meleeT = 0; this.pitch = 0;
     this.adsToggled = false; this.crouchToggled = false;
+    this.leanState = 0; this.interacting = false;
     audio.spawn();
     this.game.fx.spawnBeam(pos);
   }
+
+  /** the weapon as it actually behaves, with purchased attachments applied */
+  get weapon() { return this.game.resolvedWeapon(this); }
 
   /** radians of view rotation per mouse count, accounting for zoom */
   sensScale() {
     const base = RAD_PER_COUNT * settings.sens;
     if (this.adsAmt <= 0.001) return base;
-    const userMult = this.arsenal.def.scope ? settings.scopeSens : settings.adsSens;
+    const w = this.weapon;
+    const userMult = (w.scope || w.magnified) ? settings.scopeSens : settings.adsSens;
     let m = lerp(1, userMult, this.adsAmt);
     if (settings.zoomMode === 'relative') {
       // keep on-screen tracking distance constant as the FOV narrows
@@ -78,8 +87,18 @@ export class Player extends Actor {
       this.recoilYaw = damp(this.recoilYaw, 0, rec * 0.9, dt);
     }
 
+    // watching a camera feed: you can look through it, but your body is standing
+    // still and exposed, and you cannot shoot
+    if (g.camIndex >= 0) {
+      if (actionHit('cameras')) g.toggleCameras();
+      if (actionDown('fire') || actionDown('aim') || Math.abs(axis('back', 'forward')) > 0.1) g.exitCameras();
+      this.arsenal.update(dt);
+      return;
+    }
+    if (actionHit('cameras')) { g.toggleCameras(); return; }
+
     // frozen during a round's prep phase — you can look around, nothing else
-    if (g.frozen) { this.adsAmt = damp(this.adsAmt, 0, 10, dt); this.updateCamera(dt, false); return; }
+    if (g.isFrozen(this)) { this.adsAmt = damp(this.adsAmt, 0, 10, dt); this.updateCamera(dt, false); return; }
 
     // ---------- weapon state ----------
     const ars = this.arsenal;
@@ -87,6 +106,7 @@ export class Player extends Actor {
     const w = ars.def;
     this.meleeCd = Math.max(0, this.meleeCd - dt);
     this.raiseT = Math.max(0, this.raiseT - dt);
+    this.abilityCd = Math.max(0, this.abilityCd - dt);
     if (this.meleeT > 0) this.meleeT = Math.max(0, this.meleeT - dt);
 
     // ---------- stance inputs (hold or toggle) ----------
@@ -95,9 +115,10 @@ export class Player extends Actor {
     if (settings.toggleCrouch) { if (actionHit('crouch')) this.crouchToggled = !this.crouchToggled; }
     else this.crouchToggled = actionDown('crouch');
 
+    const rw = this.weapon;
     const wantAds = this.adsToggled && !w.melee && this.meleeT <= 0 && !ars.reloading;
     this.adsing = wantAds;
-    this.adsAmt = damp(this.adsAmt, wantAds ? 1 : 0, 1 / Math.max(0.05, w.adsTime) * 2.2, dt);
+    this.adsAmt = damp(this.adsAmt, wantAds ? 1 : 0, 1 / Math.max(0.05, rw.adsTime) * 2.2, dt);
 
     const forward = axis('back', 'forward');
     const wantSprint = actionDown('sprint') && !wantAds && !ars.reloading && forward > 0.1;
@@ -111,7 +132,7 @@ export class Player extends Actor {
       sprint: wantSprint,
       crouch: this.crouchToggled,
       slow: this.walking,
-      lean: (actionDown('leanRight') ? 1 : 0) - (actionDown('leanLeft') ? 1 : 0),
+      lean: this.readLean(),
     };
     stepMovement(this, cmd, dt, g.world, g);
     if (wasSprinting && !this.sprinting) this.raiseT = Math.max(this.raiseT, 0.16);
@@ -132,10 +153,19 @@ export class Player extends Actor {
       }
     }
     if (actionHit('lastWeapon')) ars.select(ars.previous);
+    if (actionHit('gadget')) this.useGadget();
+    if (actionHit('ability')) this.useAbility();
     if (actionHit('nextWeapon')) ars.cycle(1);
     if (actionHit('prevWeapon')) ars.cycle(-1);
     if (actionHit('reload')) ars.startReload();
-    if (actionHit('use')) g.tryPickup(this);
+    if (g.cfg.mode === 'siege') {
+      if (actionDown('use')) {
+        const r = g.siege.interact(this, dt);
+        g.hud.setInteract(r?.label ?? null, r?.frac ?? 0);
+        this.interacting = !!r;
+      } else if (this.interacting) { g.siege.releaseInteract(this); g.hud.setInteract(null); this.interacting = false; }
+      else g.hud.setInteract(null);
+    } else if (actionHit('use')) g.tryPickup(this);
     if (actionHit('melee') && this.meleeCd <= 0) this.quickMelee();
 
     // ---------- firing ----------
@@ -158,10 +188,10 @@ export class Player extends Actor {
   }
 
   fire() {
-    const g = this.game, ars = this.arsenal, w = ars.def;
+    const g = this.game, ars = this.arsenal, w = this.weapon;
     const speedFrac = this.speed / MOVE.walk;
     const aimed = this.adsAmt > 0.8;
-    const spread = ars.currentSpread(speedFrac, !this.grounded, aimed, this.crouching);
+    const spread = ars.currentSpread(speedFrac, !this.grounded, aimed, this.crouching, w);
     const sprayIdx = ars.sprayIndex;           // read before the shot advances it
     const dir = this.aimDir(_dir).clone();
     const muzzle = g.viewModel.muzzleWorld(_mz).clone();
@@ -174,8 +204,8 @@ export class Player extends Actor {
     const [h, v] = recoilStep(w, sprayIdx);
     const j = 1 + rand(-w.recoilJitter, w.recoilJitter);
     const adsCut = lerp(1, 0.78, this.adsAmt);
-    this.recoilPitch += v * DEG * j * adsCut;
-    this.recoilYaw += h * DEG * j * adsCut;
+    this.recoilPitch += v * DEG * j * adsCut * (w.recoilVMul ?? 1);
+    this.recoilYaw += h * DEG * j * adsCut * (w.recoilHMul ?? 1);
     this.recoilHold = 0.12;
 
     g.viewModel.onFire(w);
@@ -199,6 +229,41 @@ export class Player extends Actor {
       this.arsenal.fireTimer = 0.12;
     }, 130);
     audio.click(null, { freq: 500, dur: 0.09, vol: 0.2 });
+  }
+
+  /** lean as a toggle (default) or a hold, per settings */
+  readLean() {
+    if (!settings.toggleLean) {
+      return (actionDown('leanRight') ? 1 : 0) - (actionDown('leanLeft') ? 1 : 0);
+    }
+    if (actionHit('leanLeft')) this.leanState = this.leanState === -1 ? 0 : -1;
+    if (actionHit('leanRight')) this.leanState = this.leanState === 1 ? 0 : 1;
+    if (this.sprinting) this.leanState = 0;          // you cannot sprint-lean
+    return this.leanState;
+  }
+
+  useGadget() {
+    const g = this.game, op = this.operator;
+    if (!op) return;
+    if (op.gadget.id === 'nitro' && g.gadgets.detonateRemote(this)) return;
+    if (this.gadgetCount <= 0) { g.hud.pickupToast('NO GADGETS LEFT', '#ff7a90'); return; }
+    this.gadgetCount--;
+    const dir = this.aimDir(_dir).clone();
+    dir.y += 0.12;
+    g.gadgets.throwGadget(this, op.gadget.id, dir.normalize(), 1);
+    g.hud.pickupToast(`${GADGET_INFO[op.gadget.id].name} THROWN`, '#ffd60a');
+  }
+
+  useAbility() {
+    const g = this.game, op = this.operator;
+    if (!op) return;
+    if (this.abilityCd > 0) return;
+    if (this.abilityCharges <= 0) { g.hud.pickupToast('ABILITY EXHAUSTED', '#ff7a90'); return; }
+    const res = g.gadgets.useAbility(this, op);
+    if (!res.ok) { if (res.msg) g.hud.pickupToast(res.msg, '#ff7a90'); return; }
+    this.abilityCharges--;
+    this.abilityCd = op.ability.cooldown;
+    g.hud.pickupToast(`${op.ability.name} USED`, '#00ffa8');
   }
 
   addShake(amount) {
@@ -248,7 +313,7 @@ export class Player extends Actor {
       (this.yaw + this.recoilYaw) + shx,
       this.roll + shx * 0.4, 'YXZ');
 
-    const w = this.arsenal.def;
+    const w = this.weapon;
     const target = dead ? settings.fov : lerp(settings.fov, settings.fov * w.adsFovMult, this.adsAmt);
     this.fovCur = damp(this.fovCur, target, 14, dt);
     if (Math.abs(cam.fov - this.fovCur) > 0.01) { cam.fov = this.fovCur; cam.updateProjectionMatrix(); }
