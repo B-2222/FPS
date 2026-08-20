@@ -120,12 +120,14 @@
           <label>GAME MODE</label>
           <div class="seg" id="sel-mode">
             <button data-v="siege" class="on">SIEGE</button>
-            <button data-v="tactical">TACTICAL</button>
-            <button data-v="tdm">TEAM DEATHMATCH</button>
-            <button data-v="ffa">FREE FOR ALL</button>
             <button data-v="gungame">GUN GAME</button>
           </div>
           <p class="mode-note" id="mode-note"></p>
+        </div>
+        <div class="field">
+          <label>MAP</label>
+          <div class="seg" id="sel-map"></div>
+          <p class="mode-note" id="map-note"></p>
         </div>
         <div class="field">
           <label>BOT COUNT — <b id="lab-bots">7</b></label>
@@ -143,10 +145,6 @@
         <div class="field" id="field-rounds">
           <label>ROUNDS TO WIN — <b id="lab-rounds">4</b></label>
           <input type="range" id="in-rounds" min="1" max="8" value="4" />
-        </div>
-        <div class="field" id="field-score">
-          <label>SCORE LIMIT — <b id="lab-score">30</b></label>
-          <input type="range" id="in-score" min="5" max="80" step="5" value="30" />
         </div>
         <button id="btn-play" class="big-btn">DEPLOY</button>
       </section>

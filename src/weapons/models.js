@@ -170,6 +170,144 @@ const BUILD = {
     g.userData.ironY = 0.155; g.userData.railY = 0.10;
     g.userData.railZ = -0.02; g.userData.barrelZ = -0.6; g.userData.underZ = -0.3;
   },
+  machinepistol(g, ac) {
+    b(g, 0, 0.02, -0.04, 0.058, 0.09, 0.34, M.body);
+    b(g, 0, -0.09, 0.06, 0.058, 0.19, 0.09, M.grip);
+    b(g, 0, -0.20, 0.05, 0.05, 0.24, 0.08, M.dark);          // extended mag
+    cyl(g, 0, 0.02, -0.24, 0.015, 0.14, M.steel);
+    b(g, 0, 0.075, -0.06, 0.026, 0.02, 0.2, M.dark);         // rail
+    b(g, 0.032, 0.02, -0.02, 0.004, 0.035, 0.2, accent(ac));
+    b(g, -0.032, 0.02, -0.02, 0.004, 0.035, 0.2, accent(ac));
+    ironSights(g, 0.094, -0.18, 0.09, 0.009);
+    g.userData.muzzle = new THREE.Vector3(0, 0.02, -0.32);
+    g.userData.ironY = 0.094; g.userData.railY = 0.068;
+    g.userData.railZ = -0.06; g.userData.barrelZ = -0.28; g.userData.underZ = -0.16;
+    g.userData.slide = g.children[0];
+  },
+  pdw(g, ac) {
+    b(g, 0, 0, 0, 0.075, 0.115, 0.34, M.body);
+    b(g, 0, -0.055, 0.05, 0.068, 0.15, 0.11, M.grip);
+    b(g, 0, -0.135, -0.04, 0.05, 0.27, 0.075, M.dark);       // long straight mag
+    b(g, 0, 0.01, 0.20, 0.045, 0.06, 0.16, M.dark);          // folding stock
+    cyl(g, 0, 0.015, -0.24, 0.017, 0.2, M.steel);
+    b(g, 0, 0.02, -0.17, 0.048, 0.05, 0.14, M.light);
+    b(g, 0, 0.068, -0.02, 0.03, 0.018, 0.26, M.dark);
+    b(g, 0.04, 0.0, -0.02, 0.005, 0.045, 0.2, accent(ac));
+    b(g, -0.04, 0.0, -0.02, 0.005, 0.045, 0.2, accent(ac));
+    ironSights(g, 0.108, -0.21, 0.07);
+    g.userData.muzzle = new THREE.Vector3(0, 0.015, -0.36);
+    g.userData.ironY = 0.108; g.userData.railY = 0.078;
+    g.userData.railZ = -0.02; g.userData.barrelZ = -0.33; g.userData.underZ = -0.16;
+  },
+  carbine(g, ac) {
+    b(g, 0, 0, 0, 0.082, 0.112, 0.52, M.body);
+    b(g, 0, -0.055, 0.09, 0.072, 0.155, 0.12, M.grip);
+    b(g, 0, -0.10, -0.02, 0.068, 0.19, 0.1, M.dark);
+    b(g, 0, 0.005, 0.25, 0.065, 0.095, 0.18, M.dark);        // collapsed stock
+    cyl(g, 0, 0.015, -0.36, 0.02, 0.3, M.steel);
+    cyl(g, 0, 0.015, -0.52, 0.03, 0.08, M.dark);             // flash hider
+    b(g, 0, 0.02, -0.26, 0.052, 0.055, 0.22, M.light);
+    b(g, 0, 0.07, 0.0, 0.03, 0.02, 0.32, M.dark);
+    b(g, 0.043, 0.02, -0.04, 0.006, 0.03, 0.26, accent(ac));
+    b(g, -0.043, 0.02, -0.04, 0.006, 0.03, 0.26, accent(ac));
+    ironSights(g, 0.114, -0.31, 0.11);
+    g.userData.muzzle = new THREE.Vector3(0, 0.015, -0.57);
+    g.userData.ironY = 0.114; g.userData.railY = 0.08;
+    g.userData.railZ = 0.0; g.userData.barrelZ = -0.5; g.userData.underZ = -0.25;
+  },
+  bullpup(g, ac) {
+    b(g, 0, 0, 0.06, 0.084, 0.13, 0.66, M.body);
+    b(g, 0, -0.055, -0.16, 0.072, 0.15, 0.12, M.grip);       // grip forward of the mag
+    b(g, 0, -0.09, 0.22, 0.066, 0.17, 0.11, M.dark);         // mag behind the grip
+    cyl(g, 0, 0.02, -0.42, 0.02, 0.36, M.steel);
+    b(g, 0, 0.025, -0.28, 0.055, 0.06, 0.2, M.light);
+    b(g, 0, 0.085, 0.06, 0.032, 0.022, 0.44, M.light);       // full-length carry rail
+    b(g, 0.046, 0.0, 0.06, 0.006, 0.05, 0.4, accent(ac));
+    b(g, -0.046, 0.0, 0.06, 0.006, 0.05, 0.4, accent(ac));
+    ironSights(g, 0.132, -0.3, 0.2);
+    g.userData.muzzle = new THREE.Vector3(0, 0.02, -0.62);
+    g.userData.ironY = 0.132; g.userData.railY = 0.098;
+    g.userData.railZ = 0.02; g.userData.barrelZ = -0.56; g.userData.underZ = -0.26;
+  },
+  autoshotgun(g, ac) {
+    b(g, 0, 0, 0.02, 0.092, 0.135, 0.5, M.body);
+    b(g, 0, -0.055, 0.14, 0.076, 0.15, 0.12, M.grip);
+    b(g, 0, -0.125, -0.03, 0.08, 0.22, 0.13, M.dark);        // box magazine
+    b(g, 0, 0.0, 0.32, 0.07, 0.11, 0.2, M.dark);
+    cyl(g, 0, 0.03, -0.38, 0.03, 0.48, M.steel);
+    b(g, 0, 0.03, -0.26, 0.07, 0.06, 0.2, M.light);
+    b(g, 0.05, 0.0, 0.02, 0.006, 0.05, 0.26, accent(ac));
+    b(g, -0.05, 0.0, 0.02, 0.006, 0.05, 0.26, accent(ac));
+    ironSights(g, 0.12, -0.52, 0.12);
+    g.userData.muzzle = new THREE.Vector3(0, 0.03, -0.64);
+    g.userData.ironY = 0.12; g.userData.railY = 0.086;
+    g.userData.railZ = 0.02; g.userData.barrelZ = -0.6; g.userData.underZ = -0.3;
+  },
+  slug(g, ac) {
+    b(g, 0, 0, 0.04, 0.088, 0.125, 0.42, M.body);
+    b(g, 0, -0.05, 0.16, 0.072, 0.15, 0.12, M.wood);
+    b(g, 0, 0.0, 0.3, 0.066, 0.1, 0.18, M.wood);             // stubby stock
+    cyl(g, 0, 0.03, -0.26, 0.034, 0.34, M.steel);            // short thick barrel
+    cyl(g, 0, -0.035, -0.24, 0.026, 0.3, M.dark);
+    b(g, 0, -0.035, -0.2, 0.085, 0.075, 0.15, M.wood);       // pump
+    b(g, 0.05, 0.0, 0.04, 0.006, 0.05, 0.22, accent(ac));
+    b(g, -0.05, 0.0, 0.04, 0.006, 0.05, 0.22, accent(ac));
+    ironSights(g, 0.118, -0.4, 0.12);
+    g.userData.muzzle = new THREE.Vector3(0, 0.03, -0.46);
+    g.userData.ironY = 0.118; g.userData.railY = 0.084;
+    g.userData.railZ = 0.04; g.userData.barrelZ = -0.42; g.userData.underZ = -0.22;
+    g.userData.pump = g.children[5];
+  },
+  dmr(g, ac) {
+    b(g, 0, 0, 0.04, 0.082, 0.12, 0.74, M.body);
+    b(g, 0, -0.055, 0.14, 0.072, 0.155, 0.12, M.grip);
+    b(g, 0, -0.10, -0.06, 0.068, 0.2, 0.1, M.dark);
+    b(g, 0, 0.0, 0.38, 0.07, 0.12, 0.22, M.dark);
+    cyl(g, 0, 0.015, -0.52, 0.021, 0.5, M.steel);
+    cyl(g, 0, 0.015, -0.78, 0.031, 0.08, M.dark);
+    b(g, 0, 0.025, -0.32, 0.052, 0.055, 0.28, M.light);
+    cyl(g, 0, 0.118, 0.02, 0.034, 0.26, M.dark);             // low-power scope
+    cyl(g, 0, 0.118, -0.12, 0.042, 0.035, M.glass);
+    b(g, 0.045, 0.0, -0.06, 0.006, 0.05, 0.4, accent(ac));
+    b(g, -0.045, 0.0, -0.06, 0.006, 0.05, 0.4, accent(ac));
+    g.userData.muzzle = new THREE.Vector3(0, 0.015, -0.84);
+    g.userData.ironY = 0.118; g.userData.railY = 0.082;
+    g.userData.railZ = 0.02; g.userData.barrelZ = -0.78; g.userData.underZ = -0.32;
+    g.userData.fixedScope = true;
+  },
+  crossbow(g, ac) {
+    b(g, 0, 0, 0.06, 0.05, 0.07, 0.72, M.body);              // stock rail
+    b(g, 0, -0.06, 0.16, 0.058, 0.16, 0.1, M.grip);
+    b(g, 0, 0.0, 0.34, 0.06, 0.1, 0.18, M.dark);
+    // limbs, swept forward
+    const limbL = b(g, -0.17, 0.02, -0.3, 0.24, 0.022, 0.05, M.dark);
+    limbL.rotation.y = 0.42;
+    const limbR = b(g, 0.17, 0.02, -0.3, 0.24, 0.022, 0.05, M.dark);
+    limbR.rotation.y = -0.42;
+    b(g, 0, 0.02, -0.28, 0.09, 0.05, 0.12, M.light);          // riser
+    b(g, 0, 0.055, -0.05, 0.014, 0.014, 0.44, accent(ac));    // the bolt on the rail
+    cyl(g, 0, 0.02, -0.44, 0.012, 0.16, M.steel);
+    ironSights(g, 0.104, -0.34, 0.14, 0.009);
+    g.userData.muzzle = new THREE.Vector3(0, 0.045, -0.5);
+    g.userData.ironY = 0.104; g.userData.railY = 0.074;
+    g.userData.railZ = 0.02; g.userData.barrelZ = -0.46; g.userData.underZ = -0.24;
+  },
+  grenadier(g, ac) {
+    cyl(g, 0, 0.02, -0.16, 0.056, 0.62, M.body);             // fat tube
+    cyl(g, 0, 0.02, -0.5, 0.062, 0.06, M.dark);
+    b(g, 0, -0.06, 0.16, 0.07, 0.16, 0.12, M.grip);
+    b(g, 0, 0.0, 0.3, 0.07, 0.12, 0.2, M.dark);
+    cyl(g, 0, -0.02, 0.06, 0.085, 0.12, M.dark);             // revolving drum
+    b(g, 0, 0.03, -0.28, 0.06, 0.05, 0.16, M.light);         // fore-grip shroud
+    b(g, 0.06, 0.0, -0.1, 0.006, 0.05, 0.3, accent(ac));
+    b(g, -0.06, 0.0, -0.1, 0.006, 0.05, 0.3, accent(ac));
+    b(g, 0, 0.1, 0.12, 0.05, 0.06, 0.03, M.dark);            // ladder leaf sight
+    ironSights(g, 0.13, -0.4, 0.16);
+    g.userData.muzzle = new THREE.Vector3(0, 0.02, -0.56);
+    g.userData.ironY = 0.13; g.userData.railY = 0.09;
+    g.userData.railZ = -0.02; g.userData.barrelZ = -0.5; g.userData.underZ = -0.26;
+    g.userData.cyl = g.children[4];
+  },
   knife(g, ac) {
     b(g, 0, 0, 0.06, 0.03, 0.09, 0.16, M.grip);
     b(g, 0, 0.0, -0.06, 0.012, 0.055, 0.26, M.steel);
@@ -270,8 +408,19 @@ export const VM_HIP = {
   lmg:      [0.35, -0.33, -0.70],
   rocket:   [0.33, -0.26, -0.72],
   knife:    [0.34, -0.30, -0.52],
+  machinepistol: [0.28, -0.27, -0.58],
+  pdw:      [0.30, -0.29, -0.60],
+  carbine:  [0.31, -0.30, -0.64],
+  bullpup:  [0.32, -0.30, -0.62],
+  autoshotgun: [0.33, -0.31, -0.66],
+  slug:     [0.32, -0.31, -0.62],
+  dmr:      [0.33, -0.30, -0.70],
+  crossbow: [0.32, -0.29, -0.66],
+  grenadier: [0.33, -0.28, -0.66],
 };
 export const VM_ADS_Z = {
   rifle: -0.46, smg: -0.42, shotgun: -0.46, sniper: -0.40,
   pistol: -0.40, revolver: -0.40, lmg: -0.50, rocket: -0.52, knife: -0.50,
+  machinepistol: -0.40, pdw: -0.42, carbine: -0.44, bullpup: -0.44,
+  autoshotgun: -0.46, slug: -0.44, dmr: -0.42, crossbow: -0.46, grenadier: -0.48,
 };

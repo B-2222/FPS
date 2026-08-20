@@ -72,12 +72,12 @@ export const WEAPONS = {
   },
   shotgun: {
     ...base, id: 'shotgun', name: 'BREACH-12', cls: 'SHOTGUN', slot: 3,
-    dmg: 13, pellets: 12, rpm: 70, mag: 6, reserve: 36, reload: 0.55, reloadPerShell: true,
+    dmg: 15, pellets: 12, rpm: 88, mag: 7, reserve: 42, reload: 0.5, reloadPerShell: true,
     headshotKill: false, headMult: 1.8,          // pellets: a head hit hurts, it doesn't delete
-    hipSpread: 3.2, adsSpread: 2.0, hipMovePenalty: 0.8, adsMovePenalty: 0.5, adsTime: 0.26,
+    hipSpread: 2.3, adsSpread: 1.5, hipMovePenalty: 0.55, adsMovePenalty: 0.35, adsTime: 0.22,
     spreadPerShot: 0, pattern: makePattern(31, 8, { climb: 2.6, plateau: 0.8, rise: 3, sway: 0.3, swayLen: 2, hMax: 1.4 }),
     kick: 0.15, shakeAmt: 1.3,
-    falloffStart: 8, falloffEnd: 24, falloffMin: 0.15, moveMult: 1.02,
+    falloffStart: 9, falloffEnd: 21, falloffMin: 0.12, moveMult: 1.06,
     sound: { crack: 1700, body: 105, vol: 0.72, dur: 0.42 },
     stats: { dmg: .95, rate: .2, range: .18, mob: .8, ctrl: .4 },
     color: 0xff6a3d, botBurst: [1, 2], botPause: [0.7, 1.1],
@@ -137,10 +137,110 @@ export const WEAPONS = {
     stats: { dmg: 1, rate: .1, range: .5, mob: .6, ctrl: .25 },
     color: 0xff4d6a, botBurst: [1, 1], botPause: [1.4, 2.4],
   },
+  /* ---- the gun-game ladder brings in guns that never show up in a loadout ---- */
+  machinepistol: {
+    ...base, id: 'machinepistol', name: 'VIPER MP', cls: 'MACHINE PISTOL', slot: 5,
+    dmg: 21, rpm: 1100, auto: true, mag: 24, reserve: 144, reload: 1.7,
+    hipSpread: 2.9, adsSpread: 0.14, adsMovePenalty: 0.5, adsTime: 0.15,
+    pattern: makePattern(97, 24, { climb: 0.52, plateau: 0.45, rise: 5, sway: 0.26, swayLen: 3, hMax: 2.4 }),
+    falloffStart: 11, falloffEnd: 32, falloffMin: 0.45, moveMult: 1.18, swapTime: 0.32,
+    sound: { crack: 3200, body: 250, vol: 0.38, dur: 0.16 },
+    stats: { dmg: .4, rate: 1, range: .22, mob: 1, ctrl: .3 },
+    color: 0xff8fd0, botBurst: [5, 8], botPause: [0.22, 0.45],
+  },
+  pdw: {
+    ...base, id: 'pdw', name: 'HORNET PDW', cls: 'PDW', slot: 2,
+    dmg: 24, rpm: 980, auto: true, mag: 40, reserve: 200, reload: 2.1,
+    hipSpread: 2.7, adsSpread: 0.1, adsMovePenalty: 0.55, adsTime: 0.17,
+    pattern: makePattern(103, 40, { climb: 0.4, plateau: 0.52, rise: 7, sway: 0.18, swayLen: 4, hMax: 2.0 }),
+    falloffStart: 14, falloffEnd: 40, falloffMin: 0.5, moveMult: 1.13, swapTime: 0.36,
+    sound: { crack: 3100, body: 235, vol: 0.4, dur: 0.18 },
+    stats: { dmg: .45, rate: .95, range: .3, mob: .95, ctrl: .6 },
+    color: 0x7bf0c8, botBurst: [5, 8], botPause: [0.22, 0.5],
+  },
+  carbine: {
+    ...base, id: 'carbine', name: 'SHORTHAND CQB', cls: 'CARBINE', slot: 1,
+    dmg: 30, rpm: 780, auto: true, mag: 25, reserve: 150, reload: 2.1,
+    hipSpread: 2.4, adsSpread: 0.07, adsMovePenalty: 0.8, adsTime: 0.2,
+    pattern: makePattern(109, 25, { climb: 0.58, plateau: 0.4, rise: 4, sway: 0.16, swayLen: 3, hMax: 1.8 }),
+    falloffStart: 24, falloffEnd: 66, falloffMin: 0.6, moveMult: 1.06, swapTime: 0.42,
+    sound: { crack: 2700, body: 205, vol: 0.48, dur: 0.24 },
+    stats: { dmg: .6, rate: .8, range: .55, mob: .85, ctrl: .65 },
+    color: 0x4fd0ff, botBurst: [3, 6], botPause: [0.26, 0.55],
+  },
+  bullpup: {
+    ...base, id: 'bullpup', name: 'CINDER BP', cls: 'BULLPUP', slot: 1,
+    dmg: 29, rpm: 860, auto: true, mag: 35, reserve: 175, reload: 2.6,
+    hipSpread: 2.8, adsSpread: 0.06, adsMovePenalty: 0.9, adsTime: 0.27,
+    pattern: makePattern(113, 35, { climb: 0.46, plateau: 0.6, rise: 7, sway: 0.11, swayLen: 6, hMax: 1.2 }),
+    recoilRecover: 7.5,
+    falloffStart: 30, falloffEnd: 84, falloffMin: 0.65, moveMult: 0.96, swapTime: 0.55,
+    sound: { crack: 2500, body: 175, vol: 0.5, dur: 0.25 },
+    stats: { dmg: .6, rate: .85, range: .7, mob: .6, ctrl: .85 },
+    color: 0xb0ff6a, botBurst: [4, 7], botPause: [0.28, 0.6],
+  },
+  autoshotgun: {
+    ...base, id: 'autoshotgun', name: 'RIPTIDE AA', cls: 'AUTO SHOTGUN', slot: 3,
+    dmg: 10, pellets: 9, rpm: 240, auto: true, mag: 12, reserve: 60, reload: 3.2,
+    headshotKill: false, headMult: 1.7,
+    hipSpread: 3.2, adsSpread: 2.3, hipMovePenalty: 0.6, adsMovePenalty: 0.4, adsTime: 0.24,
+    spreadPerShot: 0, pattern: makePattern(127, 12, { climb: 1.5, plateau: 0.7, rise: 4, sway: 0.35, swayLen: 2, hMax: 1.8 }),
+    kick: 0.12, shakeAmt: 0.9,
+    falloffStart: 7, falloffEnd: 17, falloffMin: 0.1, moveMult: 0.98, swapTime: 0.6,
+    sound: { crack: 1850, body: 120, vol: 0.62, dur: 0.32 },
+    stats: { dmg: .8, rate: .55, range: .15, mob: .6, ctrl: .3 },
+    color: 0xff8c42, botBurst: [2, 4], botPause: [0.5, 0.9],
+  },
+  slug: {
+    ...base, id: 'slug', name: 'DOORKNOCKER', cls: 'SLUG GUN', slot: 3,
+    dmg: 88, rpm: 65, mag: 5, reserve: 30, reload: 0.55, reloadPerShell: true,
+    hipSpread: 4.0, adsSpread: 0.09, hipMovePenalty: 1.6, adsMovePenalty: 1.4, adsTime: 0.3,
+    spreadPerShot: 0, pattern: makePattern(131, 6, { climb: 3.0, plateau: 0.85, rise: 2, sway: 0.3, swayLen: 2, hMax: 1.2 }),
+    kick: 0.18, shakeAmt: 1.4, recoilRecover: 4.5,
+    falloffStart: 22, falloffEnd: 52, falloffMin: 0.55, moveMult: 0.94, swapTime: 0.6,
+    sound: { crack: 1600, body: 95, vol: 0.8, dur: 0.46 },
+    stats: { dmg: .95, rate: .18, range: .5, mob: .65, ctrl: .3 },
+    color: 0xe0603a, tracerWidth: 0.04, botBurst: [1, 1], botPause: [0.8, 1.3],
+  },
+  dmr: {
+    ...base, id: 'dmr', name: 'VERDICT DMR', cls: 'MARKSMAN', slot: 4,
+    dmg: 62, rpm: 260, mag: 20, reserve: 100, reload: 2.6,
+    hipSpread: 4.2, adsSpread: 0.02, hipMovePenalty: 2.4, adsMovePenalty: 1.9,
+    spreadPerShot: 0, adsFovMult: 0.46, adsTime: 0.33, scope: true,
+    pattern: makePattern(137, 20, { climb: 1.5, plateau: 0.6, rise: 3, sway: 0.22, swayLen: 3, hMax: 1.4 }),
+    kick: 0.14, shakeAmt: 0.9, recoilRecover: 5,
+    falloffStart: 60, falloffEnd: 150, falloffMin: 0.8, moveMult: 0.9, swapTime: 0.6,
+    sound: { crack: 2300, body: 120, vol: 0.7, dur: 0.36 },
+    stats: { dmg: .85, rate: .35, range: .9, mob: .55, ctrl: .5 },
+    color: 0x9fb6ff, tracer: 0xd8e6ff, botBurst: [2, 3], botPause: [0.5, 0.9],
+  },
+  crossbow: {
+    ...base, id: 'crossbow', name: 'WHISPER XB', cls: 'CROSSBOW', slot: 6,
+    dmg: 110, rpm: 42, mag: 1, reserve: 20, reload: 1.5,
+    hipSpread: 2.0, adsSpread: 0.02, adsMovePenalty: 1.2, adsFovMult: 0.6, adsTime: 0.3,
+    spreadPerShot: 0, pattern: makePattern(139, 4, { climb: 1.0, plateau: 0.9, rise: 2, sway: 0.1, swayLen: 2, hMax: 0.6 }),
+    kick: 0.08, shakeAmt: 0.4, silent: true, shellEject: false,
+    projectile: { kind: 'bolt', speed: 78, radius: 0.1, gravity: 6.5, splash: 0, splashDmg: 0, selfMult: 0, knock: 0 },
+    falloffStart: 300, falloffEnd: 400, falloffMin: 1, moveMult: 1.02, swapTime: 0.5,
+    sound: { crack: 1400, body: 320, vol: 0.22, dur: 0.14 },
+    stats: { dmg: 1, rate: .12, range: .7, mob: .8, ctrl: .8 },
+    color: 0x8ce07a, botBurst: [1, 1], botPause: [1.0, 1.8],
+  },
+  grenadier: {
+    ...base, id: 'grenadier', name: 'THUMPER 40', cls: 'LAUNCHER', slot: 8,
+    dmg: 30, rpm: 70, mag: 4, reserve: 12, reload: 3.4, headMult: 1, limbMult: 1,
+    headshotKill: false, hipSpread: 1.6, adsSpread: 0.5, adsTime: 0.3,
+    spreadPerShot: 0, pattern: makePattern(149, 4, { climb: 1.8, plateau: 0.9, rise: 2, sway: 0.2, swayLen: 2, hMax: 1 }),
+    kick: 0.16, shakeAmt: 1.5, moveMult: 0.94, swapTime: 0.65, shellEject: false,
+    projectile: { speed: 34, radius: 0.22, gravity: 13, splash: 5.2, splashDmg: 68, selfMult: 0.5, knock: 9 },
+    sound: { crack: 1500, body: 140, vol: 0.62, dur: 0.36 },
+    stats: { dmg: .8, rate: .25, range: .4, mob: .7, ctrl: .4 },
+    color: 0xffb648, botBurst: [1, 2], botPause: [1.0, 1.8],
+  },
   knife: {
     ...base, id: 'knife', name: 'COMBAT KNIFE', cls: 'MELEE', slot: 9,
-    dmg: 65, headMult: 1.6, headshotKill: false, rpm: 110, mag: Infinity, reserve: 0, reload: 0,
-    melee: true, range: 2.6, hipSpread: 0, adsSpread: 0, spreadPerShot: 0,
+    dmg: 55, headMult: 1.6, headshotKill: false, rpm: 135, mag: Infinity, reserve: 0, reload: 0,
+    melee: true, backstabKill: true, range: 3.0, hipSpread: 0, adsSpread: 0, spreadPerShot: 0,
     hipMovePenalty: 0, adsMovePenalty: 0, airPenalty: 0,
     moveMult: 1.2, swapTime: 0.25, falloffStart: 3, falloffEnd: 3.2, falloffMin: 1,
     kick: 0.1, shakeAmt: 0.3, pattern: [[0, 0.4]],
@@ -170,4 +270,17 @@ export function recoilStep(w, index) {
 }
 
 /** gun-game ladder */
-export const GUNGAME_LADDER = ['pistol', 'smg', 'shotgun', 'rifle', 'lmg', 'revolver', 'rocket', 'sniper', 'knife'];
+/**
+ * Gun-game ladder — eighteen rungs that walk from a sidearm to a knife.
+ * Ordered so the gun keeps changing how you have to play: spray, then burst,
+ * then close-quarters, then precision, and every explosive tier is followed by
+ * something that punishes you for standing still.
+ */
+export const GUNGAME_LADDER = [
+  'pistol', 'machinepistol', 'pdw', 'smg', 'autoshotgun', 'carbine',
+  'rifle', 'bullpup', 'lmg', 'slug', 'shotgun', 'dmr',
+  'revolver', 'crossbow', 'grenadier', 'rocket', 'sniper', 'knife',
+];
+
+/** every gun in the game, loadout guns first */
+export const ALL_WEAPON_IDS = Object.keys(WEAPONS);

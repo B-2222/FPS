@@ -1,7 +1,7 @@
 // ============ persisted user settings ============
 // v2: sensitivity units changed with the tactical rework, so old saves would
 // feel wildly wrong — start everyone on the retuned defaults.
-const KEY = 'overclock.settings.v3';
+const KEY = 'overclock.settings.v4';
 
 export const settings = {
   // ---- aim ----
@@ -23,7 +23,7 @@ export const settings = {
   toggleAds: false, toggleCrouch: false, toggleSprint: false, toggleLean: true, autoReload: true,
 
   // ---- match config ----
-  mode: 'siege', bots: 7, difficulty: 'normal', scoreLimit: 30, roundsToWin: 4, loadout: 'rifle',
+  mode: 'siege', mapId: 'random', bots: 7, difficulty: 'normal', roundsToWin: 4, loadout: 'rifle',
 
   // ---- progression ----
   credits: 1200,

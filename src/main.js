@@ -9,6 +9,7 @@ import {
 import { audio, setAudioVolume } from './core/audio.js';
 import { WEAPON_IDS, WEAPONS, getWeapon } from './weapons/defs.js';
 import { ATTACKERS, DEFENDERS, GADGET_INFO } from './game/operators.js';
+import { MAP_META } from './world/maps/index.js';
 import { ATTACHMENTS, SLOTS, SLOT_LABEL, attachmentById, resolveWeapon, DEFAULT_LOADOUT } from './weapons/attachments.js';
 
 const $ = id => document.getElementById(id);
@@ -82,7 +83,6 @@ showCm360();
 bindRange('in-fov', 'fov', v => Math.round(v), v => { if (game) game.camera.fov = v; });
 bindRange('in-vol', 'volume', v => Math.round(v), v => setAudioVolume(v / 100));
 bindRange('in-bots', 'bots', v => Math.round(v));
-bindRange('in-score', 'scoreLimit', v => Math.round(v));
 bindRange('in-rounds', 'roundsToWin', v => Math.round(v));
 bindSeg('sel-mode', 'mode', syncModeUI);
 bindSeg('sel-diff', 'difficulty');
@@ -108,18 +108,34 @@ $('lab-vol').textContent = Math.round(settings.volume);
 document.documentElement.style.setProperty('--ch', settings.crosshairColor);
 
 const MODE_NOTES = {
-  siege: 'Attack and defend a house. Attackers plant the defuser on site, defenders stop them or pull it out. One life per round, sides swap every round, walls are destructible.',
-  tactical: 'One life per round. No respawns, teams start apart, first to the round limit wins. Death drops you into spectator until the round ends.',
-  tdm: 'Two teams, respawns on, first team to the score limit.',
-  ffa: 'Everyone for themselves.',
-  gungame: 'Every kill promotes you one weapon up the ladder. Knife to finish.',
+  siege: 'Attack and defend. Attackers drone the building, then breach and plant the defuser; defenders barricade, reinforce, trap and hold. One life per round, sides swap every round, walls come down.',
+  gungame: 'Eighteen guns, one kill each, sidearm to knife. No pickups, no teams — and a knife kill knocks its victim back a rung.',
 };
 function syncModeUI() {
   $('mode-note').textContent = MODE_NOTES[settings.mode] || '';
-  const rounds = settings.mode === 'tactical' || settings.mode === 'siege';
-  $('field-rounds').style.display = rounds ? '' : 'none';
-  $('field-score').style.display = (rounds || settings.mode === 'gungame') ? 'none' : '';
+  $('field-rounds').style.display = settings.mode === 'siege' ? '' : 'none';
 }
+
+function buildMapPicker() {
+  const seg = $('sel-map');
+  if (!seg) return;
+  seg.innerHTML = '';
+  const entries = [...MAP_META.map(m => ({ v: m.id, label: m.name, blurb: m.blurb })),
+                   { v: 'random', label: 'RANDOM', blurb: 'A different map every match.' }];
+  const sync = () => {
+    [...seg.children].forEach(b => b.classList.toggle('on', b.dataset.v === settings.mapId));
+    const cur = entries.find(e => e.v === settings.mapId);
+    $('map-note').textContent = cur ? cur.blurb : '';
+  };
+  for (const e of entries) {
+    const btn = document.createElement('button');
+    btn.dataset.v = e.v; btn.textContent = e.label;
+    btn.addEventListener('click', () => { settings.mapId = e.v; saveSettings(); sync(); });
+    seg.appendChild(btn);
+  }
+  sync();
+}
+buildMapPicker();
 syncModeUI();
 
 // pause-menu duplicates
@@ -366,7 +382,7 @@ function startMatch() {
   game.fx.blood = settings.blood;
   game.startMatch({
     mode: settings.mode, bots: Math.round(settings.bots),
-    difficulty: settings.difficulty, scoreLimit: Math.round(settings.scoreLimit),
+    difficulty: settings.difficulty, map: settings.mapId,
     roundsToWin: Math.round(settings.roundsToWin),
   });
   requestLock(settings.rawInput);

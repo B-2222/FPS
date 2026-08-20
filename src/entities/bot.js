@@ -540,6 +540,11 @@ export class Bot extends Actor {
     this.kitT = rand(3, 7);
     const side = g.sideOf(this);
     const inPrep = g.siege.phase === 'prep';
+    // defenders board up whatever frame they happen to be next to while setting up
+    if (side === 'def' && inPrep) {
+      const opening = g.gadgets.nearestOpening(this.pos, 3.4);
+      if (opening && Math.random() < 0.7) { g.gadgets.buildBarricade(this, opening); return; }
+    }
     if (side === 'def' && !inPrep && Math.random() < 0.5) return;
     if (side === 'atk' && inPrep) return;
     if (side === 'atk' && (this.targetDist ?? 99) < 12) return;   // not mid-fight

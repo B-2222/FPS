@@ -1,12 +1,12 @@
 # OVERCLOCK — tactical FPS
 
 A browser shooter built around aim and information, not movement tricks. Attack and defend
-a two-storey house, with destructible walls, operators with unique kit, throwables, a
-camera network, and bots that play the objective. Headshots kill instantly. No build step,
-no downloads, no network — it runs from static files.
+one of three close-quarters maps, with destructible walls, operators with unique kit,
+throwables, drones, a camera network, and bots that play the objective. Headshots kill
+instantly. No build step, no downloads, no network — it runs from static files.
 
 ![menu](docs/menu.png)
-![house](docs/house.png)
+![lodge](docs/house.png)
 
 ## Run it
 
@@ -19,21 +19,40 @@ game works completely offline. (`npm install` is only needed to run the tests.) 
 local server rather than opening `index.html` directly, because the game is built from ES
 modules.
 
+## Maps
+
+Three of them, picked in the menu or left on **RANDOM**. All three are built for close
+quarters: sight lines rarely reach 15 m, every room has at least two ways in, and both
+objectives sit deep enough inside that you have to commit to reach them.
+
+| | | |
+| --- | --- | --- |
+| **LODGE** | dusk | Two-storey house. Garage, kitchen, hall and stairwell below; master bedroom, office and bathroom above, with two ceiling hatches and a landing that overlooks the hall. |
+| **DEPOT** | night | Industrial. Container aisles, a workshop, a server room and a mezzanine you can drop off — everything is a corner and nothing is a lane. |
+| **VILLA** | day | A ring of rooms around an open courtyard, so every hold can be flanked from two sides and the courtyard is a killing floor. |
+
+Each map has two objectives on different floors, four cameras, eight attacker spawns and
+twelve defender spawns, and every attacker spawn can walk to both sites — the test suite
+checks that on every run, because a map where the bots can't reach the site isn't a map.
+
 ## Siege — the main mode
 
-Two teams of four in a house. **Attackers** come in from the yard and must plant the
-defuser on the objective and hold it for 32 seconds. **Defenders** stop them, or pull the
-defuser back out. Wiping the other side also wins the round, and defenders win the clock.
-One life per round, sides swap every round, first to the round limit takes the match.
+Two teams in a building. **Attackers** come in from outside and must plant the defuser on
+the objective and hold it for 32 seconds. **Defenders** stop them, or pull the defuser back
+out. Wiping the other side also wins the round, and defenders win the clock. One life per
+round, sides swap every round, first to the round limit takes the match.
 
-- **The house is destructible.** Interior walls are drywall panels: you can shoot *through*
-  them (rounds lose power with each panel), blow doorways with a breach charge, or knock
-  one out with a sledgehammer. Two ceiling hatches let you open the floor above. Everything
-  is rebuilt between rounds.
-- **Cameras.** Defenders can watch four fixed feeds with `B` — and while you are watching
-  one, your body is standing still and exposed. Attackers can shoot the cameras out.
-- **Prep phase.** Defenders set up while the attack holds outside; reinforce walls, place
-  mines, drop shields, add a spy camera.
+- **Prep phase.** Defenders barricade doors and windows (hold `F` in a frame), reinforce
+  walls, place mines and drop shields while the attack stays outside.
+- **Attackers drone first.** `B` puts you in a small ground drone: fast, fragile, and
+  everything it sees is marked for your team. Defenders can shoot it out.
+- **The building is destructible.** Interior walls are drywall panels: shoot *through* them
+  (rounds lose power with each panel), blow doorways with a breach charge, or take one out
+  with a sledgehammer. Ceiling hatches open the floor above. Breaching genuinely opens new
+  routes — the nav grid relinks, so bots walk through the hole you just made.
+- **Cameras.** Defenders watch four fixed feeds with `B` — and while you are watching one,
+  your body is standing still and exposed. Attackers can shoot the cameras out.
+- **Vaulting.** `Space` at a window sill or low ledge climbs it, so windows are entries.
 - **Death is not the end of your round** — you spectate a living teammate until it resolves.
 
 ## Operators
@@ -60,6 +79,28 @@ ability plus a throwable.
 Gadgets: frag, smoke (blocks sight lines for everyone, bots included), flashbang (only
 blinds you if you were looking at it), proximity mine, and a remote-detonated nitro cell.
 
+## Gun game
+
+![gun game](docs/gungame.png)
+
+Eighteen guns, one kill each, sidearm to knife. No teams, no floor pickups — you only ever
+carry the gun the ladder hands you, so every rung is a different problem to solve.
+
+```
+SIDEARM P7 → VIPER MP → HORNET PDW → WASP SMG → RIPTIDE AA → SHORTHAND CQB
+→ TR-9 RIFLE → CINDER BP → HAILSTORM → DOORKNOCKER → BREACH-12 → VERDICT DMR
+→ MAGNUM .44 → WHISPER XB → THUMPER 40 → SKYBREAKER → LONGSHOT → COMBAT KNIFE
+```
+
+The order alternates on purpose: a spray gun, then something that wants single shots, then
+something that only works in a doorway. Nine of those guns exist for this mode alone — a
+1100 rpm machine pistol, a full-auto shotgun, a slug gun, a marksman rifle, a silent
+crossbow that arcs, a 40 mm launcher.
+
+Two rules keep it moving: a promotion tops you up 30 health, so pushing beats hiding — and
+a **knife kill knocks its victim back a rung**, which is the comeback mechanic that keeps
+whoever is on the sniper honest.
+
 ## Armoury
 
 ![armoury](docs/armoury.png)
@@ -81,11 +122,14 @@ Kills and matches pay credits. Spend them on permanent attachments, per weapon:
 
 - **One shot to the head ends it** — any bullet weapon, any range, through armour.
 - **Bodies take 3–4 rounds.** Fights are decided by who saw whom first and who was aimed in.
+- **Close quarters are lethal.** The shotgun kills in one shell inside a doorway and is
+  useless past 20 m; the knife takes two from the front and one from behind.
 - **Aimed and stationary is pin-point. Nothing else is.** Hipfire opens the cone ~50×,
   movement scales with your actual speed, and shooting mid-jump is useless.
 - **Recoil is a fixed, learnable pattern** per weapon (±10% jitter), recovering to your
   original aim 0.12 s after you stop firing.
-- **Walk 4.1 m/s, sprint 6.8, slide out of a sprint.** No bunny hopping, no air-strafing.
+- **Walk 4.1 m/s, sprint 6.8, slide out of a sprint, vault low ledges.** No bunny hopping,
+  no air-strafing.
 - **Leaning is a toggle** (`Q`/`E`, hold-mode available in settings) with no speed penalty —
   and it moves your head hitbox, so peeking is a real risk.
 - **Sound is information.** Sprinting is loud, `Alt` walks silently, gunfire pulls bots in.
@@ -103,10 +147,10 @@ tab. Click a slot, press any key, mouse button or scroll direction; right-click 
 | `Shift` | Sprint | | `Mouse 2` | Aim down sights |
 | `Alt` | Walk (silent) | | `R` | Reload |
 | `Ctrl` | Crouch | | `V` | Melee |
-| `C` | Slide (sprinting) | | `F` | Use / plant / defuse |
-| `Space` | Jump | | `G` | Throw gadget |
+| `C` | Slide (sprinting) | | `F` | Use / barricade / plant / defuse |
+| `Space` | Jump / vault | | `G` | Throw gadget |
 | `Q` / `E` | Lean left / right | | `Z` | Operator ability |
-| `Tab` | Scoreboard | | `B` | Camera feed |
+| `Tab` | Scoreboard | | `B` | Drone (attack) / cameras (defence) |
 
 ## Aim settings
 
@@ -114,14 +158,6 @@ Built for people who care about their sensitivity: hipfire sens with a live **cm
 readout (set your DPI so the number is real), separate **ADS** and **scope** multipliers,
 **relative vs independent** zoom scaling, vertical/horizontal ratio, invert, raw input, and
 hold-or-toggle for aim, crouch and lean.
-
-## Other modes
-
-- **Tactical** — one life per round, no objective, teams start apart.
-- **Team deathmatch** — respawns on, friendly fire off.
-- **Free for all** — everyone for themselves.
-- **Gun game** — one kill per rung of a nine-weapon ladder, knife to finish. Floor weapons
-  are removed in this mode: you only ever use the gun the ladder gives you.
 
 ## How the bots work
 
@@ -133,11 +169,12 @@ shooting through walls they cannot see through.
 - **Aim** — the view turns toward a predicted point at a capped rate, offset by an error
   angle that grows with range and target speed and shrinks the longer they track you. They
   shoulder the weapon when engaging and stop moving when they are nearly on target.
-- **Movement** — A\* over a multi-level nav grid built from the map, covering stairs,
-  doorways and drops, with straight-line shortcutting and ledge probing. Blowing a wall
-  relinks the grid, so destruction really does open new routes for them.
+- **Movement** — A\* over a multi-level nav grid built from the map geometry, covering
+  stairs, doorways and drops. The grid keeps only nodes you can walk *to* and *back from*,
+  so nothing paths onto a bed it can't get off, and it holds dormant nodes inside every
+  drywall wall — the moment you breach one, they link up and the bots come through it.
 - **Objective play** — attacker bots push the site and plant; defenders hold it, defuse,
-  fortify walls and place traps during prep.
+  barricade doorways, fortify walls and place traps during prep.
 
 | | Reaction | Aim error | Sight | Aims for the head |
 | --- | --- | --- | --- | --- |
@@ -156,50 +193,54 @@ src/
   main.js           boot, menus, rebinding UI, armoury, main loop
   core/             keybinds, input, settings (incl. cm/360), procedural audio
   world/
-    house.js        the map: rooms, soft walls, hatches, objectives, cameras
+    mapkit.js       shared map construction kit: walls with openings, stairs,
+                    destructible panels, sky and lighting presets
+    maps/           lodge.js · depot.js · villa.js, plus the registry
     collision.js    AABB broadphase, raycasting, destruction, swept movement
-    nav.js          multi-level nav grid, A*, incremental relinking
+    nav.js          multi-level nav grid, A*, reachability pruning, relinking
   entities/
     movement.js     stances, lean, slide — no bhop
     actor.js        health, armour, hitboxes, inventory, spread model
-    player.js       look, sensitivity, lean, pattern recoil, gadgets, abilities
+    player.js       look, sensitivity, lean, vault, pattern recoil, gadgets
     bot.js          perception → decisions → aim → movement → objective
     botmodel.js     procedural animated humanoid + nametag
   weapons/
-    defs.js         weapon stats and generated spray patterns
+    defs.js         weapon stats, spray patterns, the gun-game ladder
     attachments.js  attachment effects and the credit economy
     models.js       procedural guns, sights and attachment parts
     viewmodel.js    first-person animation, ADS pose derived from the sight
   game/
     game.js         match flow, spawning, cameras, operators, scoring
     siege.js        attack/defend rounds, plant and defuse
+    drone.js        the attackers' scouting drone
     operators.js    operator roster
-    gadgets.js      throwables, deployables, abilities, smoke and flash effects
-    combat.js       ballistics, wall penetration, explosions
+    gadgets.js      throwables, deployables, barricades, smoke and flash
+    combat.js       ballistics, wall penetration, projectiles, explosions
   fx/effects.js     particles, tracers, decals, explosions
   ui/               HUD and minimap
 test/smoke.mjs      headless integration tests
 ```
 
-Nothing is loaded from a CDN and there are no image or audio files: the house, weapons,
+Nothing is loaded from a CDN and there are no image or audio files: the maps, weapons,
 characters, effects and every sound are generated in code.
 
 ## Multiplayer
 
 Not built. The game is a pure static site, and a join code needs a server both players can
-reach to match the code and relay traffic — which GitHub Pages cannot host — plus real
+reach to match the code and relay traffic — which static hosting cannot do — plus real
 netcode (server-authoritative movement, interpolation, lag compensation). That is a project
 in its own right rather than a setting to switch on.
 
 ## Tuning
 
-- Weapon stats and spray patterns: `src/weapons/defs.js`.
+- Weapon stats, spray patterns and the ladder: `src/weapons/defs.js`.
 - Attachments and prices: `src/weapons/attachments.js`.
 - Operators: `src/game/operators.js`.
 - Bot skill: `DIFFICULTY` in `src/entities/bot.js`.
 - Movement feel: `MOVE` in `src/entities/movement.js`.
-- The house: `buildHouse()` in `src/world/house.js` — `wallX`/`wallZ` take opening ranges,
-  and anything marked breakable is built as destructible panels.
+- Maps: `src/world/maps/*.js` — `wallX`/`wallZ` take opening ranges (which also become
+  barricade and vault points), and anything marked `SOFT` is built as destructible panels.
+  Add a file, export `meta` and `build`, and register it in `src/world/maps/index.js`.
 
 ## Tests
 
@@ -209,8 +250,9 @@ npm start          # in another shell
 npm test
 ```
 
-37 checks against the real game in headless Chromium: that every attacker spawn can path to
-both objectives, wall penetration and destruction, nav relinking after a breach, all six
-gadgets and abilities, plant/defuse, headshot lethality, TTK, the spread and recoil models,
-attachments, the sight-line maths, cameras, all five modes running to completion, and the
-frame budget with 15 Nightmare bots.
+53 checks against the real game in headless Chromium: that all three maps build and that
+every attacker spawn can path to both objectives on each of them, movement pacing, lean,
+vaulting, wall penetration and destruction, nav relinking after a breach, barricades, the
+drone, every gadget and ability, plant/defuse, headshot lethality, close-quarters TTK, the
+spread and recoil models, attachments, the sight-line maths, cameras, the full gun-game
+ladder, both modes running to completion, and the frame budget with nine Nightmare bots.

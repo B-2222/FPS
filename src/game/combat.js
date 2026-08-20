@@ -48,7 +48,7 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
   // ---- projectile weapons ----
   if (w.projectile) {
     spawnProjectile(game, shooter, muzzle, coneDir(_dir.copy(dirIn), dirIn, spreadDeg * 0.4).clone(), w);
-    game.fx.muzzleFlash(muzzle, dirIn, 0.7, 0xffb45a, opts.vmMuzzle);
+    if (!w.silent) game.fx.muzzleFlash(muzzle, dirIn, 0.7, 0xffb45a, opts.vmMuzzle);
     audio.gunshot(muzzle, w.sound);
     return;
   }
@@ -58,8 +58,14 @@ export function fireWeapon(game, shooter, dirIn, spreadDeg, opts = {}) {
     const hit = traceShot(game, shooter, origin, _dir.copy(dirIn), w.range);
     audio.click(muzzle, { freq: 900, dur: 0.12, vol: 0.35 });
     if (hit.actor) {
-      const dmg = hit.part === 'head' && w.headshotKill ? LETHAL
+      // a knife in the back finishes it; from the front it takes two
+      const v = hit.actor;
+      const behind = w.backstabKill &&
+        ((-Math.sin(v.yaw)) * (shooter.pos.x - v.pos.x) + (-Math.cos(v.yaw)) * (shooter.pos.z - v.pos.z)) < -0.25;
+      const dmg = behind ? LETHAL
+        : hit.part === 'head' && w.headshotKill ? LETHAL
         : w.dmg * (hit.part === 'head' ? w.headMult : hit.part === 'legs' ? w.limbMult : 1);
+      if (behind && shooter === game.player) game.hud.killPopup('BACKSTAB');
       resolveHit(game, shooter, hit.actor, dmg, hit, w);
     } else if (hit.world) {
       game.fx.impact(hit.point, hit.normal, 'wall');
@@ -133,7 +139,18 @@ export function traceShot(game, shooter, origin, dir, maxDist, maxPenetrations =
       const h = a.hitTest(from, dir, bestT);
       if (h && h.t < bestT) { bestT = h.t; actor = a; part = h.part; }
     }
+    // drones are fair game too
+    let drone = null;
+    for (const d of game.drones || []) {
+      if (!d.alive || game.friendly(shooter, d)) continue;
+      const h = d.hitTest(from, dir, bestT);
+      if (h && h.t < bestT) { bestT = h.t; drone = d; actor = null; part = 'drone'; }
+    }
     const point = new THREE.Vector3().copy(dir).multiplyScalar(bestT).add(from);
+    if (drone) {
+      drone.kill();
+      return { t: travelled + bestT, point, normal: dir.clone().negate(), actor: null, part: 'drone', world: false, power, punched };
+    }
     if (actor) return { t: travelled + bestT, point, normal: dir.clone().negate(), actor, part, world: false, power, punched };
 
     if (!wallHit) return { t: travelled + bestT, point, normal: dir.clone().negate(), actor: null, part: null, world: false, power, punched };
@@ -176,8 +193,13 @@ function resolveHit(game, shooter, victim, dmg, hit, w) {
 
 /* ---------- projectiles ---------- */
 export function spawnProjectile(game, owner, pos, dir, w) {
-  const geo = game._rocketGeo || (game._rocketGeo = new THREE.CylinderGeometry(0.09, 0.13, 0.62, 8));
-  const mat = game._rocketMat || (game._rocketMat = new THREE.MeshLambertMaterial({ color: 0xd8dde4, emissive: 0x441100 }));
+  const bolt = w.projectile.kind === 'bolt';
+  const geo = bolt
+    ? (game._boltGeo || (game._boltGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.5, 6)))
+    : (game._rocketGeo || (game._rocketGeo = new THREE.CylinderGeometry(0.09, 0.13, 0.62, 8)));
+  const mat = bolt
+    ? (game._boltMat || (game._boltMat = new THREE.MeshLambertMaterial({ color: 0xbfd8a8, emissive: 0x0c1a08 })))
+    : (game._rocketMat || (game._rocketMat = new THREE.MeshLambertMaterial({ color: 0xd8dde4, emissive: 0x441100 })));
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = false;
   game.scene.add(mesh);
@@ -201,18 +223,18 @@ export function updateProjectiles(game, dt) {
 
     // world / actor collision along this step
     const hit = game.world.raycast(p.pos, _dir, stepLen + pr.radius);
-    let actorHit = null, actorT = stepLen + pr.radius;
+    let actorHit = null, actorT = stepLen + pr.radius, actorPart = 'body';
     for (const a of game.actors) {
       if (a === p.owner || !a.alive) continue;
       if (game.friendly(p.owner, a)) continue;
       const h = a.hitTest(p.pos, _dir, actorT);
-      if (h && h.t < actorT) { actorT = h.t; actorHit = a; }
+      if (h && h.t < actorT) { actorT = h.t; actorHit = a; actorPart = h.part || 'body'; }
     }
     const wallT = hit ? hit.dist : Infinity;
 
     if (actorHit && actorT <= wallT) {
       _p.copy(_dir).multiplyScalar(actorT).add(p.pos);
-      explode(game, p, _p, actorHit);
+      explode(game, p, _p, actorHit, actorPart);
       cleanupProjectile(game, list, i, p); continue;
     }
     if (hit && wallT <= stepLen + pr.radius) {
@@ -225,7 +247,7 @@ export function updateProjectiles(game, dt) {
     p.mesh.position.copy(p.pos);
     p.mesh.quaternion.setFromUnitVectors(UP, _dir);
     p.trail -= dt;
-    if (p.trail <= 0) { p.trail = 0.016; game.fx.smokeTrail(p.pos); }
+    if (p.trail <= 0 && pr.splash > 0) { p.trail = 0.016; game.fx.smokeTrail(p.pos); }
     if (p.life <= 0) { explode(game, p, p.pos, null); cleanupProjectile(game, list, i, p); }
   }
 }
@@ -235,8 +257,29 @@ function cleanupProjectile(game, list, i, p) {
   list.splice(i, 1);
 }
 
-export function explode(game, proj, at, directVictim) {
+export function explode(game, proj, at, directVictim, part = 'body') {
   const w = proj.def, pr = w.projectile;
+
+  // A bolt has no blast: it either buries itself in a wall or in somebody.
+  if (!(pr.splash > 0)) {
+    if (directVictim) {
+      const lethal = part === 'head' && w.headshotKill;
+      const dmg = lethal ? LETHAL : w.dmg * (part === 'head' ? w.headMult : part === 'legs' ? w.limbMult : 1);
+      const res = directVictim.applyDamage(dmg, proj.owner, { weapon: w.id, part });
+      proj.owner.damageDealt += res.dealt;
+      directVictim.onDamaged?.(res.dealt, proj.owner, { point: at, part }, w);
+      if (proj.owner === game.player) {
+        game.hud.hitmarker(res.killed, part === 'head');
+        game.hud.floatDamage(at, Math.round(res.dealt), part === 'head');
+      }
+      if (res.killed) game.onKill(proj.owner, directVictim, w.id, part === 'head');
+    } else {
+      game.fx.impact(at, UP, 'wall');
+    }
+    audio.click(at, { freq: 620, dur: 0.1, vol: 0.3 });
+    return;
+  }
+
   game.fx.explosion(at, pr.splash);
   audio.explosion(at);
   game.shakeFromExplosion(at, pr.splash);

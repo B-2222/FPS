@@ -7,6 +7,7 @@ import { settings, RAD_PER_COUNT } from '../core/settings.js';
 import { audio } from '../core/audio.js';
 import { clamp, damp, lerp, rand } from '../core/util.js';
 import { fireWeapon } from '../game/combat.js';
+import { bodyFree } from '../world/collision.js';
 import { getWeapon, WEAPON_IDS, recoilStep } from '../weapons/defs.js';
 import { GADGET_INFO } from '../game/operators.js';
 
@@ -28,6 +29,7 @@ export class Player extends Actor {
     this.walking = false;
     this.lastFireAt = -9;
     this.leanState = 0;         // -1 / 0 / +1 when leaning is a toggle
+    this.vault = null;          // active window/ledge vault
     this.abilityCharges = 0; this.gadgetCount = 0; this.abilityCd = 0;
     this.interacting = false;
   }
@@ -87,15 +89,19 @@ export class Player extends Actor {
       this.recoilYaw = damp(this.recoilYaw, 0, rec * 0.9, dt);
     }
 
-    // watching a camera feed: you can look through it, but your body is standing
-    // still and exposed, and you cannot shoot
-    if (g.camIndex >= 0) {
-      if (actionHit('cameras')) g.toggleCameras();
-      if (actionDown('fire') || actionDown('aim') || Math.abs(axis('back', 'forward')) > 0.1) g.exitCameras();
+    // driving a drone or watching a camera: you can look through it, but your
+    // body is standing there and you cannot shoot
+    if (g.viewMode !== 'self') {
+      if (actionHit('cameras')) g.toggleRemoteView();
+      if (g.viewMode === 'camera' && (actionDown('fire') || actionDown('aim') || Math.abs(axis('back', 'forward')) > 0.1)) g.exitRemote();
+      if (actionHit('fire') && g.viewMode === 'drone') g.exitRemote();
       this.arsenal.update(dt);
       return;
     }
-    if (actionHit('cameras')) { g.toggleCameras(); return; }
+    if (actionHit('cameras')) { g.toggleRemoteView(); return; }
+
+    // ---------- vaulting ----------
+    if (this.vault) { this.updateVault(dt); this.updateCamera(dt, false); return; }
 
     // frozen during a round's prep phase — you can look around, nothing else
     if (g.isFrozen(this)) { this.adsAmt = damp(this.adsAmt, 0, 10, dt); this.updateCamera(dt, false); return; }
@@ -134,6 +140,7 @@ export class Player extends Actor {
       slow: this.walking,
       lean: this.readLean(),
     };
+    if (cmd.jump && this.grounded && this.tryVault()) { this.updateCamera(dt, false); return; }
     stepMovement(this, cmd, dt, g.world, g);
     if (wasSprinting && !this.sprinting) this.raiseT = Math.max(this.raiseT, 0.16);
 
@@ -158,14 +165,8 @@ export class Player extends Actor {
     if (actionHit('nextWeapon')) ars.cycle(1);
     if (actionHit('prevWeapon')) ars.cycle(-1);
     if (actionHit('reload')) ars.startReload();
-    if (g.cfg.mode === 'siege') {
-      if (actionDown('use')) {
-        const r = g.siege.interact(this, dt);
-        g.hud.setInteract(r?.label ?? null, r?.frac ?? 0);
-        this.interacting = !!r;
-      } else if (this.interacting) { g.siege.releaseInteract(this); g.hud.setInteract(null); this.interacting = false; }
-      else g.hud.setInteract(null);
-    } else if (actionHit('use')) g.tryPickup(this);
+    if (g.cfg.mode === 'siege') this.updateUseKey(dt);
+    else if (actionHit('use')) g.tryPickup(this);
     if (actionHit('melee') && this.meleeCd <= 0) this.quickMelee();
 
     // ---------- firing ----------
@@ -229,6 +230,82 @@ export class Player extends Actor {
       this.arsenal.fireTimer = 0.12;
     }, 130);
     audio.click(null, { freq: 500, dur: 0.09, vol: 0.2 });
+  }
+
+  /**
+   * One key does the contextual job: barricade a frame while setting up,
+   * plant on site as an attacker, pull the defuser as a defender.
+   */
+  updateUseKey(dt) {
+    const g = this.game;
+    const holding = actionDown('use');
+    const prep = g.siege.phase === 'prep';
+    const side = g.sideOf(this);
+
+    if (prep && side === 'def') {
+      const opening = g.gadgets.nearestOpening(this.pos, 2.4);
+      if (!holding || !opening) {
+        this.barricadeT = 0;
+        g.hud.setInteract(null);
+        return;
+      }
+      this.barricadeT = (this.barricadeT || 0) + dt;
+      if (this.barricadeT >= 1.2) {
+        this.barricadeT = 0;
+        g.gadgets.buildBarricade(this, opening);
+        g.hud.pickupToast('BARRICADED', '#c99a5a');
+      }
+      g.hud.setInteract('BARRICADING', (this.barricadeT || 0) / 1.2);
+      return;
+    }
+
+    if (holding) {
+      const r = g.siege.interact(this, dt);
+      g.hud.setInteract(r?.label ?? null, r?.frac ?? 0);
+      this.interacting = !!r;
+    } else if (this.interacting) {
+      g.siege.releaseInteract(this); g.hud.setInteract(null); this.interacting = false;
+    } else g.hud.setInteract(null);
+  }
+
+  /** climb a window sill or low ledge you are facing */
+  tryVault() {
+    const g = this.game;
+    _dir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    _mz.set(this.pos.x, this.pos.y + 0.85, this.pos.z);
+    const hit = g.world.raycast(_mz, _dir, 1.25);
+    if (!hit) return false;
+    const top = hit.box.max.y;
+    const rise = top - this.pos.y;
+    if (rise < 0.45 || rise > 1.75) return false;
+    const lx = hit.point.x + _dir.x * 0.95, lz = hit.point.z + _dir.z * 0.95;
+    if (!bodyFree(g.world, lx, top + 0.06, lz, MOVE.radius, MOVE.height)) return false;
+    this.vault = {
+      t: 0, dur: 0.42,
+      from: this.pos.clone(),
+      to: new THREE.Vector3(lx, top + 0.06, lz),
+      peak: Math.max(top, this.pos.y) + 0.45,
+    };
+    this.vel.set(0, 0, 0);
+    audio.footstep(this.pos, true);
+    return true;
+  }
+
+  updateVault(dt) {
+    const v = this.vault;
+    v.t += dt;
+    const t = clamp(v.t / v.dur, 0, 1);
+    const ease = t * t * (3 - 2 * t);
+    this.pos.lerpVectors(v.from, v.to, ease);
+    this.pos.y = (1 - ease) * v.from.y + ease * v.to.y + Math.sin(t * Math.PI) * 0.28;
+    this.height = MOVE.height * (1 - 0.25 * Math.sin(t * Math.PI));
+    if (t >= 1) {
+      this.pos.copy(v.to);
+      this.height = MOVE.height;
+      this.vault = null;
+      this.grounded = true;
+      this.landT = 0.18;
+    }
   }
 
   /** lean as a toggle (default) or a hold, per settings */

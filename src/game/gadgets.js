@@ -33,6 +33,7 @@ export class GadgetSystem {
       charge: new THREE.MeshLambertMaterial({ color: 0xff7a3d, emissive: 0x3a1200 }),
       drone: new THREE.MeshLambertMaterial({ color: 0x8f7bff, emissive: 0x180d3a }),
       shield: new THREE.MeshLambertMaterial({ color: 0x51606f }),
+      plank: new THREE.MeshLambertMaterial({ color: 0x7a5a34 }),
     };
   }
 
@@ -170,6 +171,53 @@ export class GadgetSystem {
     this.items.push({ kind: 'shield', owner: actor, team: actor.team, mesh, static: true, box, life: 999, fuse: Infinity });
     audio.click(pos, { freq: 300, dur: 0.16, vol: 0.35 });
     return { ok: true };
+  }
+
+  /* ---------------- barricades ---------------- */
+  /** the door or window frame an actor is standing in front of */
+  nearestOpening(pos, maxDist = 2.6) {
+    const g = this.game;
+    let best = null, bd = maxDist;
+    for (const o of g.openings || []) {
+      if (o.barricaded) continue;
+      const dy = pos.y + 1.0 - (o.y0 + o.y1) / 2;
+      if (Math.abs(dy) > 1.8) continue;
+      const d = Math.hypot(pos.x - o.x, pos.z - o.z);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  }
+
+  buildBarricade(actor, opening) {
+    const g = this.game;
+    if (!opening || opening.barricaded) return false;
+    const along = opening.axis === 'x';
+    const w = along ? opening.width - 0.1 : opening.thick + 0.14;
+    const d = along ? opening.thick + 0.14 : opening.width - 0.1;
+    const h = opening.y1 - opening.y0;
+    const box = g.world.addBox(
+      { x: opening.x - w / 2, y: opening.y0, z: opening.z - d / 2 },
+      { x: opening.x + w / 2, y: opening.y0 + h, z: opening.z + d / 2 },
+      { breakable: true, hp: 75, barricade: true, deployed: true });
+    const grp = new THREE.Group();
+    const planks = Math.max(3, Math.round(h / 0.45));
+    for (let i = 0; i < planks; i++) {
+      const py = opening.y0 + (i + 0.5) * (h / planks);
+      const plank = new THREE.Mesh(GEO.box, this.mats.plank);
+      plank.scale.set(along ? opening.width - 0.15 : 0.1, h / planks - 0.09, along ? 0.1 : opening.width - 0.15);
+      plank.position.set(opening.x, py, opening.z);
+      plank.rotation.y = (i % 2 ? 0.05 : -0.05);
+      plank.castShadow = true;
+      grp.add(plank);
+    }
+    g.scene.add(grp);
+    box.mesh = grp;
+    opening.barricaded = box;
+    box.opening = opening;
+    g.world.build();
+    g.nav.relinkNear(box.min, box.max);
+    audio.click({ x: opening.x, y: opening.y0 + 1, z: opening.z }, { freq: 420, dur: 0.18, vol: 0.4 });
+    return true;
   }
 
   /* ---------------- per-frame ---------------- */

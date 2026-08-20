@@ -1,6 +1,6 @@
 // ============ match orchestration ============
 import * as THREE from 'three';
-import { buildHouse } from '../world/house.js';
+import { buildMapById, randomMapId, MAP_META } from '../world/maps/index.js';
 import { NavGrid } from '../world/nav.js';
 import { bodyFree } from '../world/collision.js';
 import { FX } from '../fx/effects.js';
@@ -15,6 +15,7 @@ import { buildWorldWeapon } from '../weapons/models.js';
 import { updateProjectiles } from './combat.js';
 import { GadgetSystem } from './gadgets.js';
 import { SiegeMode, PHASE } from './siege.js';
+import { Drone } from './drone.js';
 import { OPERATORS, ATTACKERS, DEFENDERS, getOperator, speedMult } from './operators.js';
 import { resolveWeapon, DEFAULT_LOADOUT } from '../weapons/attachments.js';
 import { audio } from '../core/audio.js';
@@ -48,6 +49,8 @@ export class Game {
     this.frozen = false;
     this.attackersFrozen = false;
     this.camIndex = -1;
+    this.drones = [];
+    this.viewMode = 'self';      // 'self' | 'camera' | 'drone'
   }
 
   /* ================= boot ================= */
@@ -79,21 +82,9 @@ export class Game {
     vmRim.position.set(0.9, -0.2, -1);
     this.vmScene.add(vmRim);
 
-    const built = buildHouse(this.scene, quality);
-    this.world = built.world;
-    this.spawnPoints = built.spawns;
-    this.atkSpawns = built.atkSpawns;
-    this.defSpawns = built.defSpawns;
-    this.jumpPads = built.jumpPads;
-    this.bounds = built.bounds;
-    this.mapPickups = built.pickups;
-    this.mapWeapons = built.weaponSpawns;
-    this.objectives = built.objectives;
-    this.cameraSpecs = built.cameras;
-    this.world.onDestroy = box => this.onGeometryDestroyed(box);
-
-    this.nav = new NavGrid(this.world, { half: this.bounds + 6, cell: 2.0 }).build();
-    this.validateSpawns();
+    this.mapRoot = new THREE.Group();
+    this.scene.add(this.mapRoot);
+    this.loadMap(settings.mapId && settings.mapId !== 'random' ? settings.mapId : randomMapId());
 
     this.fx = new FX(this.scene, this.vmScene, quality);
     this.fx.blood = settings.blood;
@@ -108,6 +99,38 @@ export class Game {
     addEventListener('resize', () => this.resize());
     this.resize();
     return this;
+  }
+
+  /** tear down the current map and build another one */
+  loadMap(id) {
+    const quality = settings.quality;
+    if (this.mapRoot.children.length) {
+      this.mapRoot.traverse(o => {
+        if (o.isMesh || o.isInstancedMesh) { o.geometry?.dispose?.(); o.material?.dispose?.(); }
+      });
+      this.mapRoot.clear();
+      this.scene.fog = null;
+    }
+    const built = buildMapById(id, this.mapRoot, quality);
+    this.mapId = id;
+    this.mapName = built.name;
+    this.world = built.world;
+    this.spawnPoints = built.spawns;
+    this.atkSpawns = built.atkSpawns;
+    this.defSpawns = built.defSpawns;
+    this.jumpPads = built.jumpPads;
+    this.bounds = built.bounds;
+    this.mapPickups = built.pickups;
+    this.mapWeapons = built.weaponSpawns;
+    this.objectives = built.objectives;
+    this.cameraSpecs = built.cameras;
+    this.openings = built.openings;
+    this.world.onDestroy = box => this.onGeometryDestroyed(box);
+    // fine cells: these maps are built from 1-3 m gaps, and a coarse grid drops
+    // whole doorways between samples
+    this.nav = new NavGrid(this.world, { half: this.bounds + 6, cell: 1.15 }).build();
+    this.validateSpawns();
+    this.destroyed = [];
   }
 
   validateSpawns() {
@@ -139,10 +162,14 @@ export class Game {
   /* ================= match setup ================= */
   startMatch(cfg) {
     this.cfg = {
-      mode: cfg.mode || 'siege', botCount: cfg.bots ?? 7, difficulty: cfg.difficulty || 'normal',
+      mode: cfg.mode === 'gungame' ? 'gungame' : 'siege',
+      botCount: cfg.bots ?? 7, difficulty: cfg.difficulty || 'normal',
       scoreLimit: cfg.scoreLimit ?? 30, timeLimit: cfg.timeLimit ?? 600,
-      roundsToWin: cfg.roundsToWin ?? 4, roundTime: cfg.roundTime ?? 150, prepTime: cfg.prepTime ?? 8,
+      roundsToWin: cfg.roundsToWin ?? 4, roundTime: cfg.roundTime ?? 150, prepTime: cfg.prepTime ?? 12,
     };
+    const wantMap = cfg.map || settings.mapId || 'random';
+    const mapId = wantMap === 'random' ? randomMapId() : wantMap;
+    if (mapId !== this.mapId) this.loadMap(mapId);
     this.clearMatch();
     this.time = 0;
     this.matchTime = this.cfg.timeLimit;
@@ -150,7 +177,7 @@ export class Game {
     this.multiKill = 0; this.lastKillT = -9;
     this.roundCredits = 0;
 
-    const teamMode = ['tdm', 'tactical', 'siege'].includes(this.cfg.mode);
+    const teamMode = this.cfg.mode === 'siege';
     this.player.team = 0;
     this.player.kills = this.player.deaths = this.player.score = this.player.streak = 0;
     this.player.damageDealt = this.player.shotsFired = this.player.shotsHit = this.player.headshots = 0;
@@ -178,21 +205,22 @@ export class Game {
       this.siege.begin(this.cfg);
     } else {
       this.frozen = false; this.attackersFrozen = false;
+      // operators belong to siege; without this the gun-game HUD still offers a
+      // breach charge and the player keeps a heavy operator's speed penalty
+      for (const a of this.actors) {
+        a.operator = null; a.speedMult = 1; a.abilityCharges = 0; a.gadgetCount = 0;
+        a.maxHealth = 100; a.health = 100; a.maxShield = 100; a.shield = 0;
+      }
+      this.hud.clearRoundChrome();
       this.respawn(this.player, true);
       for (const b of this.bots) this.respawn(b, true);
-      if (this.cfg.mode === 'tactical') this.beginRound(true);
-      else this.hud.centerToast('FIGHT');
+      this.hud.centerToast('FIGHT');
     }
 
-    const modeName = { ffa: 'FREE FOR ALL', tdm: 'TEAM DEATHMATCH', gungame: 'GUN GAME', tactical: 'TACTICAL', siege: 'SIEGE' }[this.cfg.mode];
     const sub = this.cfg.mode === 'gungame'
       ? `${GUNGAME_LADDER.length} WEAPONS — ONE KILL EACH`
-      : this.cfg.mode === 'siege'
-        ? `ATTACK & DEFEND — FIRST TO ${this.cfg.roundsToWin} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`
-        : this.cfg.mode === 'tactical'
-          ? `ONE LIFE PER ROUND — FIRST TO ${this.cfg.roundsToWin}`
-          : `FIRST TO ${this.cfg.scoreLimit} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`;
-    this.hud.setMode(`${modeName} — ${sub}`);
+      : `ATTACK & DEFEND — FIRST TO ${this.cfg.roundsToWin} — ${DIFFICULTY[this.cfg.difficulty].label} BOTS`;
+    this.hud.setMode(`${this.cfg.mode === 'gungame' ? 'GUN GAME' : 'SIEGE'} · ${this.mapName} — ${sub}`);
     this.hud.show(true);
     this.updateScoreHud();
     this.running = true; this.paused = false;
@@ -213,6 +241,7 @@ export class Game {
     this.weaponCrates = [];
     for (const c of this.cameras) if (c.mesh) dropMesh(c.mesh);
     this.cameras = [];
+    this.clearDrones();
     this.gadgets?.clear();
     this.siege?.clearDefuser();
     this.restoreGeometry();
@@ -229,8 +258,16 @@ export class Game {
     this.fx.debris?.(box);
   }
 
-  /** put every soft wall back for the next round */
+  /** put every soft wall, barricade and deployable back to its start state */
   restoreGeometry() {
+    for (const o of this.openings || []) {
+      if (o.barricaded) {
+        const box = o.barricaded;
+        if (box.mesh) { box.mesh.parent?.remove(box.mesh); box.mesh = null; }
+        box.dead = true;
+        o.barricaded = null;
+      }
+    }
     if (!this.destroyed?.length) return;
     const m4 = new THREE.Matrix4();
     for (const b of this.destroyed) {
@@ -278,14 +315,45 @@ export class Game {
     return this.cameras.filter(c => !c.dead && (c.team === undefined ? side !== 'atk' : c.team === this.player.team));
   }
 
+  /** B key: attackers get a drone, defenders get the camera network */
+  toggleRemoteView() {
+    if (this.cfg?.mode === 'siege' && this.sideOf(this.player) === 'atk') this.toggleDrone();
+    else this.toggleCameras();
+  }
+
+  toggleDrone() {
+    if (this.viewMode === 'drone') { this.exitRemote(); return; }
+    let d = this.drones.find(x => x.owner === this.player && x.alive);
+    if (!d) {
+      d = new Drone(this, this.player);
+      this.drones.push(d);
+    }
+    this.myDrone = d;
+    this.viewMode = 'drone';
+    this.hud.setCamera('DRONE');
+  }
+
+  clearDrones() {
+    for (const d of this.drones) d.dispose();
+    this.drones = [];
+    this.myDrone = null;
+    if (this.viewMode === 'drone') this.exitRemote();
+  }
+
+  exitRemote() {
+    this.viewMode = 'self';
+    this.camIndex = -1;
+    this.hud.setCamera(null);
+  }
+
   toggleCameras() {
     const list = this.availableCameras();
     if (!list.length) { this.hud.pickupToast('NO CAMERAS AVAILABLE', '#ff7a90'); return; }
-    if (this.camIndex < 0) { this.camIndex = 0; this.hud.setCamera(list[0].name); }
-    else if (this.camIndex >= list.length - 1) { this.camIndex = -1; this.hud.setCamera(null); }
+    if (this.camIndex < 0) { this.camIndex = 0; this.viewMode = 'camera'; this.hud.setCamera(list[0].name); }
+    else if (this.camIndex >= list.length - 1) { this.exitRemote(); }
     else { this.camIndex++; this.hud.setCamera(list[this.camIndex].name); }
   }
-  exitCameras() { if (this.camIndex >= 0) { this.camIndex = -1; this.hud.setCamera(null); } }
+  exitCameras() { this.exitRemote(); }
 
   updateCameraView(dt) {
     const list = this.availableCameras();
@@ -335,6 +403,14 @@ export class Game {
       this.viewModel.setWeapon(actor.arsenal.current, this.resolvedWeapon(actor));
       this.hud.setOperator(op);
     } else actor.model?.setWeapon(actor.arsenal.current);
+  }
+
+  /** the gun-game ladder readout, where siege puts the operator badge */
+  showTier(actor) {
+    const tier = clamp(actor.gunGameTier, 0, GUNGAME_LADDER.length - 1);
+    const next = GUNGAME_LADDER[tier + 1];
+    this.hud.setTier(tier + 1, GUNGAME_LADDER.length,
+      getWeapon(GUNGAME_LADDER[tier]).name, next ? getWeapon(next).name : null);
   }
 
   /** weapon definition with the player's purchased attachments applied */
@@ -488,12 +564,7 @@ export class Game {
         return pick(pool);
       }
     }
-    let pool = this.spawnPoints;
-    if (this.cfg.mode === 'tdm' || this.cfg.mode === 'tactical') {
-      const side = actor.team === 0 ? -1 : 1;
-      const half = this.spawnPoints.filter(sp => Math.sign(sp.x + sp.z) === side);
-      if (half.length >= 3) pool = half;
-    }
+    const pool = this.spawnPoints;
     let best = null, bestScore = -Infinity;
     for (let i = 0; i < pool.length; i++) {
       const sp = pool[(i + randInt(0, 3)) % pool.length];
@@ -529,13 +600,14 @@ export class Game {
       this.hud.showRespawn(false);
       this.exitCameras();
       this.viewModel.setWeapon(actor.arsenal.current, this.resolvedWeapon(actor));
+      if (this.cfg.mode === 'gungame') this.showTier(actor);
     }
   }
 
   /* ================= events ================= */
   friendly(a, b) {
     if (a === b) return true;
-    if (!['tdm', 'tactical', 'siege'].includes(this.cfg?.mode)) return false;
+    if (this.cfg?.mode !== 'siege') return false;      // gun game is every-man-for-himself
     return a.team === b.team;
   }
 
@@ -591,15 +663,27 @@ export class Game {
       killer.bestStreak = Math.max(killer.bestStreak, killer.streak);
       if (killer === this.player) this.awardCredits(headshot ? 75 : 50, headshot ? 'HEADSHOT' : 'KILL');
       if (this.cfg.mode === 'gungame') {
+        // The knife is the last rung, and it takes a rung off whoever it kills —
+        // it's the comeback rule that keeps a runaway leader in reach.
+        if (weaponId === 'knife' && victim.gunGameTier > 0) {
+          victim.gunGameTier--;
+          if (victim === this.player) this.hud.centerToast('KNIFED — DEMOTED');
+          else if (killer === this.player) this.hud.killPopup(`${victim.name} DEMOTED`);
+        }
         killer.gunGameTier++;
         if (killer.gunGameTier >= GUNGAME_LADDER.length) { this.endMatch(killer); return; }
         const nid = GUNGAME_LADDER[killer.gunGameTier];
         killer.arsenal.slots.clear(); killer.arsenal.order = [];
         killer.arsenal.give(nid, true);
         killer.arsenal.select(nid, true);
+        // a promotion is a small heal: pushing for the next tier has to beat hiding
+        killer.health = Math.min(killer.maxHealth, killer.health + 30);
         if (killer === this.player) {
           this.viewModel.setWeapon(nid, this.resolvedWeapon(killer, nid));
-          this.hud.killPopup(`TIER ${killer.gunGameTier + 1} — ${getWeapon(nid).name}`);
+          const next = GUNGAME_LADDER[killer.gunGameTier + 1];
+          this.hud.killPopup(`TIER ${killer.gunGameTier + 1}/${GUNGAME_LADDER.length} — ${getWeapon(nid).name}`
+            + (next ? `  ·  NEXT ${getWeapon(next).name}` : '  ·  FINAL RUNG'));
+          this.showTier(killer);
         }
       }
     } else if (isSuicide) killer = null;
@@ -622,7 +706,7 @@ export class Game {
       this.player.deadT = 0;
       this.hud.damageFlash(1);
       this.exitCameras();
-      if (this.cfg.mode === 'tactical' || this.cfg.mode === 'siege') {
+      if (this.cfg.mode === 'siege') {
         this.hud.showRespawn(false);
         this.hud.pickupToast('ELIMINATED — SPECTATING', '#ff3b5c');
       } else {
@@ -681,47 +765,23 @@ export class Game {
 
   updateScoreHud() {
     if (this.cfg.mode === 'siege') { this.siege.updateHud(); return; }
-    if (this.cfg.mode === 'tactical') {
-      this.hud.setScores(this.rounds[0], this.rounds[1], 'ROUNDS', 'ROUNDS');
-      this.hud.setAlive(this.teamAlive(0), this.teamAlive(1));
-      return;
-    }
-    if (this.cfg.mode === 'tdm') {
-      this.hud.setScores(this.teamScore(0), this.teamScore(1), 'MINT', 'CRIMSON');
-    } else if (this.cfg.mode === 'gungame') {
-      const top = Math.max(...this.actors.filter(a => a !== this.player).map(a => a.gunGameTier), 0);
-      this.hud.setScores(this.player.gunGameTier + 1, top + 1, 'TIER', 'BEST BOT');
-    } else {
-      const top = Math.max(...this.actors.filter(a => a !== this.player).map(a => a.kills), 0);
-      this.hud.setScores(this.player.kills, top, 'YOU', 'BEST BOT');
-    }
+    const top = Math.max(...this.actors.filter(a => a !== this.player).map(a => a.gunGameTier), 0);
+    this.hud.setScores(this.player.gunGameTier + 1, top + 1, 'TIER', 'BEST BOT');
   }
 
-  checkWin() {
-    if (this.over || this.cfg.mode === 'tactical' || this.cfg.mode === 'siege') return;
-    const lim = this.cfg.scoreLimit;
-    if (this.cfg.mode === 'tdm') {
-      if (this.teamScore(0) >= lim) return this.endMatch({ team: 0 });
-      if (this.teamScore(1) >= lim) return this.endMatch({ team: 1 });
-    } else if (this.cfg.mode === 'ffa') {
-      for (const a of this.actors) if (a.kills >= lim) return this.endMatch(a);
-    }
-  }
+  checkWin() { /* siege scores rounds; gun game ends on the last rung */ }
 
   endMatch(winner) {
     if (this.over) return;
     this.over = true; this.running = false;
     exitLock();
     const rows = this.scoreRows();
-    let won;
-    if (winner && winner.siegeWin !== undefined) won = winner.siegeWin;
-    else if (this.cfg.mode === 'tactical' || this.cfg.mode === 'tdm') won = winner?.team === 0;
-    else won = winner === this.player;
+    const won = winner && winner.siegeWin !== undefined ? winner.siegeWin : winner === this.player;
     const bonus = won ? 400 : 150;
     this.awardCredits(bonus, won ? 'MATCH WON' : 'MATCH PLAYED');
     this.hud.show(false);
     this.onMatchEnd?.({
-      title: won ? 'VICTORY' : 'DEFEAT', won, rows, teams: ['tdm', 'tactical', 'siege'].includes(this.cfg.mode),
+      title: won ? 'VICTORY' : 'DEFEAT', won, rows, teams: this.cfg.mode === 'siege',
       credits: this.roundCredits, balance: settings.credits,
       stats: {
         kills: this.player.kills, deaths: this.player.deaths,
@@ -738,65 +798,8 @@ export class Game {
       team: a.team === 0 ? 0 : 1, isMe: a === this.player, alive: a.alive,
       op: a.operator?.name || '',
       score: this.cfg.mode === 'gungame' ? a.gunGameTier : a.kills,
+      side: this.sideOf(a),
     })).sort((x, y) => y.score - x.score || x.deaths - y.deaths);
-  }
-
-  /* ================= tactical (non-siege round mode) ================= */
-  beginRound(first = false) {
-    this.rounds = this.rounds || [0, 0];
-    this.roundNo = (this.roundNo || 0) + 1;
-    this.roundPressure = false;
-    this.roundState = 'prep';
-    this.roundT = this.cfg.prepTime;
-    this.frozen = true;
-    this.specTarget = null;
-    for (const a of this.actors) this.respawn(a, true);
-    this.hud.setSpectating(null);
-    this.hud.showRespawn(false);
-    this.updateScoreHud();
-    if (!first) this.hud.centerToast(`ROUND ${this.roundNo}`);
-  }
-
-  endTacticalRound(winningTeam) {
-    if (this.roundState === 'over') return;
-    this.roundState = 'over';
-    this.roundT = 4;
-    this.frozen = true;
-    if (winningTeam >= 0) {
-      this.rounds[winningTeam]++;
-      const won = winningTeam === this.player.team;
-      this.hud.centerToast(won ? 'ROUND WON' : 'ROUND LOST');
-      audio.tone(won ? 660 : 300, 0.5, 0.3, 'triangle', won ? 990 : 200);
-    } else this.hud.centerToast('ROUND DRAW');
-    this.updateScoreHud();
-  }
-
-  updateRounds(dt) {
-    this.roundT -= dt;
-    if (this.roundState === 'prep') {
-      this.hud.setPrep(this.roundT);
-      if (this.roundT <= 0) {
-        this.roundState = 'live';
-        this.roundT = this.cfg.roundTime;
-        this.frozen = false;
-        this.hud.setPrep(null);
-        this.hud.centerToast('GO');
-      }
-      return;
-    }
-    if (this.roundState === 'live') {
-      this.hud.setTimer(this.roundT);
-      this.roundPressure = this.roundT < 45;
-      const a0 = this.teamAlive(0), a1 = this.teamAlive(1);
-      if (a0 === 0 || a1 === 0) return this.endTacticalRound(a0 === 0 ? 1 : 0);
-      if (this.roundT <= 0) return this.endTacticalRound(a0 === a1 ? -1 : (a0 > a1 ? 0 : 1));
-      return;
-    }
-    if (this.roundT <= 0) {
-      if (this.rounds[0] >= this.cfg.roundsToWin || this.rounds[1] >= this.cfg.roundsToWin) {
-        this.endMatch({ team: this.rounds[0] > this.rounds[1] ? 0 : 1 });
-      } else this.beginRound();
-    }
   }
 
   /** dead in a round-based match: ride along with a living teammate */
@@ -818,23 +821,16 @@ export class Game {
     this.time += dt;
     this.pathBudget = 3;
 
-    const roundMode = this.cfg.mode === 'tactical' || this.cfg.mode === 'siege';
-    if (this.cfg.mode === 'siege') {
+    const roundMode = this.cfg.mode === 'siege';
+    if (roundMode) {
       this.siege.update(dt);
-      if (this.over) return;
-    } else if (this.cfg.mode === 'tactical') {
-      this.updateRounds(dt);
       if (this.over) return;
     } else if (this.cfg.timeLimit > 0) {
       this.matchTime -= dt;
       this.hud.setTimer(this.matchTime);
       if (this.matchTime <= 0) {
-        const rank = this.cfg.mode === 'gungame'
-          ? (a, b) => b.gunGameTier - a.gunGameTier || b.kills - a.kills
-          : (a, b) => b.kills - a.kills;
-        this.endMatch(this.cfg.mode === 'tdm'
-          ? { team: this.teamScore(0) >= this.teamScore(1) ? 0 : 1 }
-          : this.actors.slice().sort(rank)[0]);
+        this.endMatch(this.actors.slice().sort(
+          (a, b) => b.gunGameTier - a.gunGameTier || b.kills - a.kills)[0]);
         return;
       }
     }
@@ -848,7 +844,18 @@ export class Game {
         this.hud.showRespawn(true, this.player.killedBy, this.player.killedWith, this.respawnTimer);
         if (this.respawnTimer <= 0) this.respawn(this.player);
       }
-    } else if (this.camIndex >= 0) this.updateCameraView(dt);
+    } else if (this.viewMode === 'camera') this.updateCameraView(dt);
+
+    // drones keep running whether or not you are looking through one
+    for (let i = this.drones.length - 1; i >= 0; i--) {
+      const d = this.drones[i];
+      if (!d.alive) { this.drones.splice(i, 1); continue; }
+      d.update(dt, this.viewMode === 'drone' && d === this.myDrone, input);
+    }
+    if (this.viewMode === 'drone') {
+      if (this.myDrone?.alive) this.myDrone.applyCamera(this.camera);
+      else { this.exitRemote(); this.hud.pickupToast('DRONE DESTROYED', '#ff3b5c'); }
+    }
 
     // ---- bots ----
     for (const b of this.bots) {
@@ -858,8 +865,6 @@ export class Game {
         if (b.respawnTimer <= 0) this.respawn(b);
       }
     }
-    if (this.cfg.mode === 'tactical') this.updateScoreHud();
-
     updateProjectiles(this, dt);
     this.gadgets.update(dt);
     this.updatePickups(dt);
@@ -877,15 +882,12 @@ export class Game {
     this.hud.update(dt, this.player);
     this.minimap.draw(dt);
     if (actionDown('scoreboard')) this.hud.scoreboard(true, {
-      title: { ffa: 'FREE FOR ALL', tdm: 'TEAM DEATHMATCH', gungame: 'GUN GAME', tactical: 'TACTICAL', siege: 'SIEGE' }[this.cfg.mode],
-      sub: this.cfg.mode === 'gungame' ? `TIER ${this.player.gunGameTier + 1} / ${GUNGAME_LADDER.length}`
-        : this.cfg.mode === 'siege' ? `ROUND ${this.siege.roundNo} — ${this.siege.rounds[0]} : ${this.siege.rounds[1]}`
-        : this.cfg.mode === 'tactical' ? `ROUND ${this.roundNo} — ${this.rounds[0]} : ${this.rounds[1]}`
-        : `FIRST TO ${this.cfg.scoreLimit}`,
+      title: this.cfg.mode === 'gungame' ? 'GUN GAME' : `SIEGE · ${this.mapName}`,
+      sub: this.cfg.mode === 'gungame'
+        ? `TIER ${this.player.gunGameTier + 1} / ${GUNGAME_LADDER.length}`
+        : `ROUND ${this.siege.roundNo} — ${this.siege.rounds[0]} : ${this.siege.rounds[1]}`,
       rows: this.scoreRows(),
-      teams: ['tdm', 'tactical', 'siege'].includes(this.cfg.mode)
-        ? (this.cfg.mode === 'siege' ? this.siege.rounds : this.cfg.mode === 'tactical' ? this.rounds : [this.teamScore(0), this.teamScore(1)])
-        : null,
+      teams: this.cfg.mode === 'siege' ? this.siege.rounds : null,
     });
     else this.hud.scoreboard(false);
 
@@ -914,7 +916,7 @@ export class Game {
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     this.renderer.clearDepth();
-    if (this.camIndex < 0) this.renderer.render(this.vmScene, this.vmCamera);
+    if (this.viewMode === 'self') this.renderer.render(this.vmScene, this.vmCamera);
   }
 }
 

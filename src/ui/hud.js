@@ -256,6 +256,25 @@ export class HUD {
       <span>${op.role} · ${op.armour === 3 ? 'HEAVY' : op.armour === 1 ? 'LIGHT' : 'MEDIUM'}</span>`;
   }
 
+  /** gun game has no operators, sites or prep — put the ladder there instead */
+  setTier(tier, total, name, next) {
+    const el = document.getElementById('op-badge');
+    if (!el) return;
+    el.innerHTML = `<b style="color:#3ad2a0">TIER ${tier}/${total} · ${name}</b>
+      <span>${next ? `NEXT — ${next}` : 'FINAL RUNG — KNIFE TO WIN'}</span>`;
+  }
+
+  /** wipe the round chrome so one mode never shows the other's furniture */
+  clearRoundChrome() {
+    this.setPrep(null);
+    this.setObjective(null);
+    this.setSpectating(null);
+    this.setCamera(null);
+    const badge = document.getElementById('op-badge');
+    if (badge) badge.innerHTML = '';
+    if (this.el.gadgets) this.el.gadgets.innerHTML = '';
+  }
+
   setGadgets(list) {
     const el = this.el.gadgets;
     if (!el) return;
